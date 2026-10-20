@@ -39,6 +39,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.blur
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -205,12 +208,31 @@ private fun HeroPage(
 ) {
     val centered = !landscape
     Box(Modifier.fillMaxSize()) {
-        AsyncImage(model = if (landscape) hero.backdropUrl ?: hero.posterUrl else hero.posterUrl ?: hero.backdropUrl,
-            contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+        // Sharp artwork: TMDB backdrop/poster at screen-appropriate size, catalog art as fallback.
+        val e = com.pira.ccloud.ui.details.rememberEnrichment(
+            if (hero.ref.type == ContentType.MOVIE) "movie:${hero.ref.catalogId}" else "series:${hero.ref.catalogId}",
+            listOf(hero.title), hero.year, hero.ref.type)
+        val tmdbArt = if (landscape) com.pira.ccloud.ui.details.sharpBackdrop(e?.backdropUrl)
+            else com.pira.ccloud.ui.details.sharpBackdrop(e?.posterUrl)
+        if (tmdbArt != null) {
+            AsyncImage(model = tmdbArt, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+        } else {
+            // Low-res catalog poster: never stretch it full-bleed. Blurred ambient fill + crisp poster at native aspect.
+            val art = hero.posterUrl ?: hero.backdropUrl
+            AsyncImage(model = art, contentDescription = null, contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize().blur(40.dp).background(Color.Black))
+            Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.45f)))
+            AsyncImage(model = art, contentDescription = null, contentScale = ContentScale.Fit,
+                modifier = Modifier.fillMaxHeight(if (landscape) 0.78f else 0.62f)
+                    .align(if (landscape) Alignment.CenterEnd else Alignment.TopCenter)
+                    .padding(end = if (landscape) gutter * 2 else 0.dp, top = if (landscape) 40.dp else 90.dp)
+                    .clip(RoundedCornerShape(18.dp)))
+        }
         Box(Modifier.fillMaxSize().background(Brush.verticalGradient(
-            0f to Color.Black.copy(alpha = 0.35f), 0.25f to Color.Transparent, 0.55f to Color.Transparent,
+            0f to Color.Black.copy(alpha = 0.25f), 0.15f to Color.Transparent, 0.65f to Color.Transparent,
             1f to CinematicColors.Stage)))
-        if (landscape) Box(Modifier.fillMaxSize().background(CinematicScrims.start))
+        if (landscape) Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(
+            0f to Color.Black.copy(alpha = 0.6f), 0.45f to Color.Transparent)))
         Column(
             Modifier.align(if (centered) Alignment.BottomCenter else Alignment.BottomStart)
                 .padding(start = gutter, end = gutter, bottom = 36.dp)
@@ -230,8 +252,10 @@ private fun HeroPage(
                 hero.genres.take(2).takeIf { it.isNotEmpty() }?.let { add(it.joinToString(", ")) }
             }.joinToString("  ·  ")
             Text(meta, color = Color.White.copy(alpha = 0.85f), fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            if (hero.synopsis.isNotBlank()) {
-                Text(hero.synopsis, color = Color.White.copy(alpha = 0.75f), fontSize = 13.sp, maxLines = 2,
+            val synopsis = (e?.overview?.takeIf { it.isNotBlank() } ?: hero.synopsis)
+                .lines().filterNot { it.trim().startsWith("نام اصلی") }.joinToString(" ").trim()
+            if (synopsis.isNotBlank()) {
+                Text(synopsis, color = Color.White.copy(alpha = 0.75f), fontSize = 13.sp, maxLines = 2,
                     overflow = TextOverflow.Ellipsis, textAlign = if (centered) TextAlign.Center else TextAlign.Start)
             }
             Spacer(Modifier.height(4.dp))

@@ -93,7 +93,11 @@ fun SingleMovieScreen(
                 VideoPlayerActivity.startWithMovieInfo(context, source.url, movie!!.id)
             },
             // Remove any padding from parent Scaffold to use full screen
-            modifier = Modifier.fillMaxSize()
+            modifier = Modifier.fillMaxSize(),
+            onGenreClick = { genreId ->
+                com.pira.ccloud.ui.details.GenreNavigation.pendingMovieGenre = genreId
+                navController.navigate("movies") { launchSingleTop = true }
+            },
         )
     } else {
         // Show loading or error state
@@ -127,7 +131,8 @@ fun MovieDetailsContent(
     movie: Movie,
     onBackClick: () -> Unit,
     onPlayClick: (Source) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onGenreClick: (Int) -> Unit = {},
 ) {
     val context = LocalContext.current
     val layoutDirection = LocalLayoutDirection.current
@@ -161,282 +166,45 @@ fun MovieDetailsContent(
             .verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        // Movie header with background cover and foreground image
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(300.dp)
-        ) {
-            // Background cover image (blurred)
-            Image(
-                painter = rememberAsyncImagePainter(
-                    ImageRequest.Builder(LocalContext.current)
-                        .data(enrichment?.backdropUrl ?: movie.cover)
-                        .crossfade(true)
-                        .build()
-                ),
-                contentDescription = null,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(MaterialTheme.colorScheme.surface),
-                contentScale = ContentScale.Crop
-            )
-            
-            // Gradient overlay for better text visibility
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(
-                        androidx.compose.ui.graphics.Brush.verticalGradient(
-                            colors = listOf(
-                                MaterialTheme.colorScheme.surface.copy(alpha = 0.5f),
-                                MaterialTheme.colorScheme.surface
-                            )
-                        )
-                    )
-            )
-            
-            // Row to contain poster and movie details side by side
-            Row(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(16.dp),
-                verticalAlignment = Alignment.Bottom
-            ) {
-                // Foreground movie poster
-                var showImageDialog by remember { mutableStateOf(false) }
-                
-                Image(
-                    painter = rememberAsyncImagePainter(
-                        ImageRequest.Builder(LocalContext.current)
-                            .data(movie.image)
-                            .crossfade(true)
-                            .build()
-                    ),
-                    contentDescription = movie.title,
-                    modifier = Modifier
-                        .height(200.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .clickable { showImageDialog = true },
-                    contentScale = ContentScale.Fit
-                )
-                
-                // Image URL dialog
-                if (showImageDialog) {
-                    AlertDialog(
-                        onDismissRequest = { showImageDialog = false },
-                        title = { Text("Image Options") },
-                        text = { Text("Choose an action for this image") },
-                        confirmButton = {
-                            TextButton(
-                                onClick = {
-                                    DownloadUtils.copyToClipboard(context, movie.image)
-                                    showImageDialog = false
-                                }
-                            ) {
-                                Text("Copy Image URL")
-                            }
-                        },
-                        dismissButton = {
-                            TextButton(
-                                onClick = { showImageDialog = false }
-                            ) {
-                                Text("Cancel")
-                            }
-                        }
-                    )
+        // Cinematic header: sharp TMDB/catalog banner, centered title, Play pill, tappable genres
+        var isFavorite by remember { mutableStateOf(false) }
+        LaunchedEffect(movie.id) { isFavorite = StorageUtils.isFavorite(context, movie.id, "movie") }
+        val firstSource = movie.sources.firstOrNull { it.url.isNotBlank() }
+        com.pira.ccloud.ui.details.CinematicDetailsHeader(
+            title = movie.title,
+            bannerUrl = enrichment?.backdropUrl ?: movie.cover.ifBlank { movie.image },
+            tagline = enrichment?.tagline,
+            meta = buildList {
+                add("Movie")
+                if (movie.imdb > 0) add("IMDb " + String.format(java.util.Locale.US, "%.1f", movie.imdb))
+                enrichment?.rating?.let { add("TMDB " + it.formatted()) }
+                if (movie.year > 0) add(movie.year.toString())
+                (enrichment?.runtimeMinutes?.let { "${it / 60}h ${it % 60}m" } ?: movie.duration)?.takeIf { it.isNotBlank() }?.let { add(it) }
+                movie.country.firstOrNull()?.let { add(it.title) }
+            },
+            genres = movie.genres.map { com.pira.ccloud.ui.details.GenreChip(it.id, it.title) },
+            playLabel = if (firstSource != null) "Play" else null,
+            isFavorite = isFavorite,
+            onBack = onBackClick,
+            onToggleFavorite = {
+                if (isFavorite) {
+                    StorageUtils.removeFavorite(context, movie.id, "movie"); isFavorite = false
+                    android.widget.Toast.makeText(context, "Removed from favorites", android.widget.Toast.LENGTH_SHORT).show()
+                } else {
+                    StorageUtils.saveFavorite(context, FavoriteItem(
+                        id = movie.id, type = "movie", title = movie.title, description = movie.description,
+                        year = movie.year, imdb = movie.imdb, rating = movie.rating, duration = movie.duration,
+                        image = movie.image, cover = movie.cover, genres = movie.genres, country = movie.country,
+                        sources = movie.sources,
+                    ))
+                    isFavorite = true
+                    android.widget.Toast.makeText(context, "Added to favorites", android.widget.Toast.LENGTH_SHORT).show()
                 }
-                
-                // Movie details to the right of the poster
-                Column(
-                    modifier = Modifier
-                        .padding(start = 16.dp)
-                        .weight(1f)
-                ) {
-                    // Movie title
-                    Text(
-                        text = movie.title,
-                        style = MaterialTheme.typography.headlineSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    
-                    // Country and year
-                    val countryText = if (movie.country.isNotEmpty()) {
-                        "${movie.country.joinToString(", ") { it.title }} (${movie.year})"
-                    } else {
-                        "(${movie.year})"
-                    }
-                    
-                    Text(
-                        text = countryText,
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    
-                    // Rating
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Star,
-                            contentDescription = "Rating",
-                            tint = Color.Yellow,
-                            modifier = Modifier.size(24.dp)
-                        )
-                        
-                        Spacer(modifier = Modifier.width(8.dp))
-                        
-                        Text(
-                            text = String.format("%.1f", movie.imdb),
-                            style = MaterialTheme.typography.headlineSmall,
-                            fontWeight = FontWeight.Medium,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                    }
-                }
-            }
-            
-            // Back button
-            IconButton(
-                onClick = onBackClick,
-                modifier = Modifier
-                    .padding(16.dp)
-                    .align(Alignment.TopStart)
-            ) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = "Back",
-                    tint = MaterialTheme.colorScheme.onSurface
-                )
-            }
-            
-            // Favorite button
-            var isFavorite by remember { mutableStateOf(false) }
-            val context = LocalContext.current
-            val movieId = movie.id
-            
-            // Check if movie is already favorite
-            LaunchedEffect(movieId) {
-                isFavorite = StorageUtils.isFavorite(context, movieId, "movie")
-            }
-            
-            var showRemoveFavoriteDialog by remember { mutableStateOf(false) }
-            
-            // Confirmation dialog for removing from favorites
-            if (showRemoveFavoriteDialog) {
-                AlertDialog(
-                    onDismissRequest = { showRemoveFavoriteDialog = false },
-                    title = { Text("Remove from Favorites") },
-                    text = { Text("Are you sure you want to remove this movie from your favorites?") },
-                    confirmButton = {
-                        TextButton(
-                            onClick = {
-                                StorageUtils.removeFavorite(context, movieId, "movie")
-                                isFavorite = false
-                                showRemoveFavoriteDialog = false
-                                // Show toast
-                                android.widget.Toast.makeText(context, "Removed from favorites", android.widget.Toast.LENGTH_SHORT).show()
-                            }
-                        ) {
-                            Text("Remove")
-                        }
-                    },
-                    dismissButton = {
-                        TextButton(
-                            onClick = { showRemoveFavoriteDialog = false }
-                        ) {
-                            Text("Cancel")
-                        }
-                    }
-                )
-            }
-            
-            IconButton(
-                onClick = {
-                    if (isFavorite) {
-                        // Show confirmation dialog instead of directly removing
-                        showRemoveFavoriteDialog = true
-                    } else {
-                        // Convert movie to favorite item with sources
-                        val favoriteItem = FavoriteItem(
-                            id = movie.id,
-                            type = "movie",
-                            title = movie.title,
-                            description = movie.description,
-                            year = movie.year,
-                            imdb = movie.imdb,
-                            rating = movie.rating,
-                            duration = movie.duration,
-                            image = movie.image,
-                            cover = movie.cover,
-                            genres = movie.genres,
-                            country = movie.country,
-                            sources = movie.sources // Include sources in favorites
-                        )
-                        StorageUtils.saveFavorite(context, favoriteItem)
-                        isFavorite = true
-                        // Show toast
-                        android.widget.Toast.makeText(context, "Added to favorites", android.widget.Toast.LENGTH_SHORT).show()
-                    }
-                },
-                modifier = Modifier
-                    .padding(16.dp)
-                    .align(Alignment.TopEnd)
-            ) {
-                Icon(
-                    imageVector = if (isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-                    contentDescription = "Favorite",
-                    tint = if (isFavorite) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-                )
-            }
-        }
-        
-        // Genres
-        if (movie.genres.isNotEmpty()) {
-            Text(
-                text = "Genres",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.padding(start = 16.dp, top = 16.dp, end = 16.dp)
-            )
-            
-            // Improved genres display with better wrapping and styling
-            LazyRow(
-                modifier = Modifier
-                    .padding(start = 16.dp, end = 16.dp, top = 8.dp)
-                    .fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                items(movie.genres) { genre ->
-                    Card(
-                        colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.primaryContainer
-                        ),
-                        shape = RoundedCornerShape(50.dp), // More rounded corners
-                        modifier = Modifier
-                            .height(32.dp) // Fixed height for consistency
-                    ) {
-                        Box(
-                            contentAlignment = Alignment.Center,
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(horizontal = 12.dp)
-                        ) {
-                            Text(
-                                text = genre.title,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                fontWeight = FontWeight.Medium,
-                                maxLines = 1
-                            )
-                        }
-                    }
-                }
-            }
-        }
-        
+            },
+            onPlay = firstSource?.let { src -> { onPlayClick(src) } },
+            onGenreClick = { onGenreClick(it.id) },
+        )
+
         // Description
         Row(
             modifier = Modifier
