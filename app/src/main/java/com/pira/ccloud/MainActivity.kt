@@ -29,6 +29,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -135,13 +138,6 @@ fun MainScreen(
     
     Scaffold(
         modifier = Modifier.fillMaxSize(),
-        bottomBar = {
-            // Only show bottom bar if the current screen requires it and we're not on splash
-            // and we're not on TV (TV uses sidebar instead)
-            if (!isTv && currentScreen.showBottomBar && currentRoute != AppScreens.Splash.route) {
-                BottomNavigationBar(navController)
-            }
-        }
     ) { innerPadding ->
         if (isTv) {
             // TV layout with sidebar navigation
@@ -164,10 +160,29 @@ fun MainScreen(
                 }
             }
         } else {
-            // Mobile/tablet layout with bottom navigation
-            Box(modifier = Modifier.padding(innerPadding)) {
-                // Pass theme settings and font settings callback to navigation
-                AppNavigation(navController, onThemeSettingsChanged, onFontSettingsChanged)
+            // Mobile/tablet: content with a floating pill nav overlaid at the bottom.
+            val showNav = currentScreen.showBottomBar && currentRoute != AppScreens.Splash.route
+            val isHome = currentRoute == AppScreens.Home.route
+            val cfg = androidx.compose.ui.platform.LocalConfiguration.current
+            val navOnTop = cfg.screenWidthDp > cfg.screenHeightDp
+            Box(modifier = Modifier.fillMaxSize()) {
+                Box(
+                    modifier = if (isHome) Modifier.fillMaxSize()
+                    else Modifier.fillMaxSize().padding(innerPadding).padding(
+                        top = if (showNav && navOnTop) 76.dp else 0.dp,
+                        bottom = if (showNav && !navOnTop) 84.dp else 0.dp,
+                    )
+                ) {
+                    AppNavigation(navController, onThemeSettingsChanged, onFontSettingsChanged)
+                }
+                if (showNav) {
+                    BottomNavigationBar(
+                        navController,
+                        if (navOnTop) Modifier.align(androidx.compose.ui.Alignment.TopCenter)
+                            .statusBarsPadding().widthIn(max = 760.dp)
+                        else Modifier.align(androidx.compose.ui.Alignment.BottomCenter).navigationBarsPadding(),
+                    )
+                }
             }
         }
     }

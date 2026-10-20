@@ -35,4 +35,6 @@
     <string name="cine_action_details">Details</string>
     <string name="cine_partial_notice">Some sections couldn\'t load.</string>
     <string name="cine_progress_cd">%1$d%% watched</string>
+    <string name="cine_type_movie">Movie</string>
+    <string name="cine_type_series">Series</string>
 </resources>

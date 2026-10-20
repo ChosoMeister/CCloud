@@ -51,7 +51,17 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.style.TextAlign
+import kotlinx.coroutines.delay
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.navigation.NavController
@@ -132,16 +142,117 @@ private fun HomeBody(
     content: HomeContent, partial: Boolean, gutter: Dp, posterWidth: Dp, isTv: Boolean,
     onPlay: (CatalogTitle) -> Unit, onDetails: (CatalogTitle) -> Unit,
 ) {
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 96.dp)) {
-        content.hero?.let { hero ->
-            item(key = "hero") { CinematicHero(hero, gutter, isTv, onPlay, onDetails) }
-        }
+    val heroes = remember(content) {
+        (listOfNotNull(content.hero) + content.rails.filter { it.kind != RailKind.CONTINUE_WATCHING && it.kind != RailKind.MY_LIST }
+            .flatMap { it.items }.filter { it.backdropUrl != null && it.availability.isPlayable })
+            .distinctBy { it.stableKey }.take(8)
+    }
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 112.dp)) {
+        // Always emit the hero slot first so late-arriving heroes never leave the list scrolled past it.
+        item(key = "hero") { if (heroes.isNotEmpty()) HeroCarousel(heroes, gutter, isTv, onPlay, onDetails) }
         if (partial) item(key = "partial") {
             Text(stringResource(R.string.cine_partial_notice), color = CinematicColors.TextTertiary, fontSize = 12.sp,
                 modifier = Modifier.padding(horizontal = gutter, vertical = CinematicSpacing.sm))
         }
         items(content.rails, key = { it.kind.name }) { rail ->
             ContentRail(rail, gutter, posterWidth, onPlay, onDetails)
+        }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun HeroCarousel(
+    heroes: List<CatalogTitle>, gutter: Dp, isTv: Boolean,
+    onPlay: (CatalogTitle) -> Unit, onDetails: (CatalogTitle) -> Unit,
+) {
+    val pager = rememberPagerState { heroes.size }
+    // Gentle auto-advance; pauses while the user is dragging.
+    LaunchedEffect(pager, heroes.size) {
+        if (heroes.size < 2) return@LaunchedEffect
+        while (true) {
+            delay(7_000)
+            if (!pager.isScrollInProgress) pager.animateScrollToPage((pager.currentPage + 1) % heroes.size)
+        }
+    }
+    val config = LocalConfiguration.current
+    val landscape = config.screenWidthDp > config.screenHeightDp
+    val height = if (landscape) config.screenHeightDp.dp else (config.screenHeightDp * 0.72f).dp
+    Box(Modifier.fillMaxWidth().height(height)) {
+        HorizontalPager(pager, Modifier.fillMaxSize(), key = { heroes[it].stableKey }) { page ->
+            HeroPage(heroes[page], gutter, isTv, landscape, onPlay, onDetails)
+        }
+        if (heroes.size > 1) {
+            Row(
+                Modifier.align(Alignment.BottomCenter).padding(bottom = 10.dp).clip(CircleShape)
+                    .background(Color.Black.copy(alpha = 0.35f)).padding(horizontal = 10.dp, vertical = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                repeat(heroes.size) { i ->
+                    val selected = i == pager.currentPage
+                    Box(Modifier.height(6.dp).width(if (selected) 18.dp else 6.dp).clip(CircleShape)
+                        .background(if (selected) Color.White else Color.White.copy(alpha = 0.45f)))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun HeroPage(
+    hero: CatalogTitle, gutter: Dp, isTv: Boolean, landscape: Boolean,
+    onPlay: (CatalogTitle) -> Unit, onDetails: (CatalogTitle) -> Unit,
+) {
+    val centered = !landscape
+    Box(Modifier.fillMaxSize()) {
+        AsyncImage(model = if (landscape) hero.backdropUrl ?: hero.posterUrl else hero.posterUrl ?: hero.backdropUrl,
+            contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(
+            0f to Color.Black.copy(alpha = 0.35f), 0.25f to Color.Transparent, 0.55f to Color.Transparent,
+            1f to CinematicColors.Stage)))
+        if (landscape) Box(Modifier.fillMaxSize().background(CinematicScrims.start))
+        Column(
+            Modifier.align(if (centered) Alignment.BottomCenter else Alignment.BottomStart)
+                .padding(start = gutter, end = gutter, bottom = 36.dp)
+                .fillMaxWidth(if (landscape) 0.55f else 1f),
+            horizontalAlignment = if (centered) Alignment.CenterHorizontally else Alignment.Start,
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text(hero.title, color = Color.White, fontSize = if (isTv) 40.sp else 30.sp, lineHeight = if (isTv) 44.sp else 34.sp,
+                fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                textAlign = if (centered) TextAlign.Center else TextAlign.Start,
+                modifier = Modifier.semantics { heading() })
+            val typeLabel = stringResource(if (hero.ref.type == ContentType.MOVIE) R.string.cine_type_movie else R.string.cine_type_series)
+            val meta = buildList {
+                add(typeLabel)
+                hero.ratings.firstOrNull()?.let { add("${it.kind.label} ${it.formatted()}") }
+                hero.year?.let { add(it.toString()) }
+                hero.genres.take(2).takeIf { it.isNotEmpty() }?.let { add(it.joinToString(", ")) }
+            }.joinToString("  ·  ")
+            Text(meta, color = Color.White.copy(alpha = 0.85f), fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (hero.synopsis.isNotBlank()) {
+                Text(hero.synopsis, color = Color.White.copy(alpha = 0.75f), fontSize = 13.sp, maxLines = 2,
+                    overflow = TextOverflow.Ellipsis, textAlign = if (centered) TextAlign.Center else TextAlign.Start)
+            }
+            Spacer(Modifier.height(4.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                if (hero.availability.isPlayable) {
+                    Button(onClick = { onPlay(hero) }, shape = CircleShape,
+                        modifier = Modifier.height(56.dp).width(if (isTv) 220.dp else 188.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFF4F4F6), contentColor = Color(0xFF111114))) {
+                        Icon(Icons.Default.PlayArrow, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text(stringResource(R.string.cine_action_play), fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
+                    }
+                }
+                val detailsCd = stringResource(R.string.cine_action_details)
+                Box(
+                    Modifier.size(56.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.14f))
+                        .border(1.dp, Color.White.copy(alpha = 0.35f), CircleShape)
+                        .clickable { onDetails(hero) }.semantics { contentDescription = detailsCd },
+                    contentAlignment = Alignment.Center,
+                ) { Icon(Icons.Default.Info, contentDescription = null, tint = Color.White) }
+            }
         }
     }
 }

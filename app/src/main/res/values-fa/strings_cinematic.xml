@@ -31,4 +31,6 @@
     <string name="cine_action_details">جزئیات</string>
     <string name="cine_partial_notice">برخی بخش‌ها بارگذاری نشدند.</string>
     <string name="cine_progress_cd">%1$d%% دیده شده</string>
+    <string name="cine_type_movie">فیلم</string>
+    <string name="cine_type_series">سریال</string>
 </resources>
