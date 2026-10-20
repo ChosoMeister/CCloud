@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="cine_avail_playable">قابل پخش</string>
+    <string name="cine_avail_episodes">قسمت‌ها</string>
+    <string name="cine_avail_no_streams">در دسترس نیست</string>
+    <string name="cine_avail_metadata_only">فقط اطلاعات</string>
+    <string name="cine_avail_subscription">نیازمند اشتراک</string>
+    <string name="cine_avail_temporarily">موقتاً در دسترس نیست</string>
+    <string name="cine_err_offline">به نظر می‌رسد اتصال اینترنت برقرار نیست.</string>
+    <string name="cine_err_timeout">پاسخ سرور بیش از حد طول کشید.</string>
+    <string name="cine_err_auth">برای مشاهده باید وارد شوید.</string>
+    <string name="cine_err_forbidden">این محتوا برای حساب شما در دسترس نیست.</string>
+    <string name="cine_err_not_found">این عنوان پیدا نشد.</string>
+    <string name="cine_err_rate_limited">درخواست‌ها زیاد است. لطفاً کمی صبر کنید.</string>
+    <string name="cine_err_server">سرویس در حال حاضر با مشکل مواجه است.</string>
+    <string name="cine_err_invalid">داده‌ی نامعتبر از سرویس دریافت شد.</string>
+    <string name="cine_err_unknown">مشکلی پیش آمد.</string>
+    <string name="cine_action_retry">تلاش دوباره</string>
+    <string name="cine_empty_title">هنوز چیزی اینجا نیست</string>
+    <string name="cine_loading">در حال بارگذاری</string>
+    <string name="cine_rating_cd">امتیاز %1$s: %2$s از ۱۰</string>
+</resources>
