@@ -150,6 +150,11 @@ fun MovieDetailsContent(
         )
     }
     
+    val enrichment = com.pira.ccloud.ui.details.rememberEnrichment(
+        "movie:${movie.id}", listOf(movie.title), movie.year.takeIf { it > 0 },
+        com.pira.ccloud.core.model.ContentType.MOVIE,
+    )
+
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -166,7 +171,7 @@ fun MovieDetailsContent(
             Image(
                 painter = rememberAsyncImagePainter(
                     ImageRequest.Builder(LocalContext.current)
-                        .data(movie.cover)
+                        .data(enrichment?.backdropUrl ?: movie.cover)
                         .crossfade(true)
                         .build()
                 ),
@@ -448,6 +453,15 @@ fun MovieDetailsContent(
             )
         }
         
+        enrichment?.overview?.takeIf { it.isNotBlank() }?.let { overview ->
+            Text(
+                text = overview,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.padding(horizontal = 16.dp)
+            )
+        }
+
         // Set layout direction to RTL for the description text
         CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
             ExpandableText(
@@ -457,6 +471,8 @@ fun MovieDetailsContent(
                     .fillMaxWidth()
             )
         }
+
+        enrichment?.let { com.pira.ccloud.ui.details.EnrichmentSection(it) }
         
         // Sources/Quality options
         if (movie.sources.isNotEmpty()) {

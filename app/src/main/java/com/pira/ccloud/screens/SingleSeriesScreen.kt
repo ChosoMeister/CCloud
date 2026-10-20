@@ -400,6 +400,11 @@ fun SeriesDetailsContent(
     var showEpisodeImageDialog by remember { mutableStateOf(false) }
     var episodeImageUrl by remember { mutableStateOf("") }
     
+    val enrichment = com.pira.ccloud.ui.details.rememberEnrichment(
+        "series:${series.id}", listOf(series.title), series.year.takeIf { it > 0 },
+        com.pira.ccloud.core.model.ContentType.SERIES,
+    )
+
     LazyColumn(
         modifier = modifier
             .fillMaxSize()
@@ -415,7 +420,7 @@ fun SeriesDetailsContent(
                 Image(
                     painter = rememberAsyncImagePainter(
                         ImageRequest.Builder(LocalContext.current)
-                            .data(series.cover)
+                            .data(enrichment?.backdropUrl ?: series.cover)
                             .crossfade(true)
                             .build()
                     ),
@@ -702,6 +707,14 @@ fun SeriesDetailsContent(
         }
         
         item {
+            enrichment?.overview?.takeIf { it.isNotBlank() }?.let { overview ->
+                Text(
+                    text = overview,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 12.dp)
+                )
+            }
             // Set layout direction to RTL for the description text
             CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
                 ExpandableText(
@@ -710,6 +723,12 @@ fun SeriesDetailsContent(
                         .padding(start = 16.dp, end = 16.dp)
                         .fillMaxWidth()
                 )
+            }
+        }
+
+        enrichment?.let { e ->
+            item(key = "tmdb_enrichment") {
+                com.pira.ccloud.ui.details.EnrichmentSection(e, Modifier.padding(top = 16.dp))
             }
         }
         

@@ -25,6 +25,12 @@ android {
         
         // Add memory management options
         multiDexEnabled = true
+
+        // Personal-build TMDB token: read from gitignored local.properties (tmdb.token=...).
+        val localProps = Properties().apply {
+            rootProject.file("local.properties").takeIf { it.exists() }?.let { f -> FileInputStream(f).use { load(it) } }
+        }
+        buildConfigField("String", "TMDB_TOKEN", "\"${localProps.getProperty("tmdb.token", "")}\"")
     }
     
     buildFeatures {
