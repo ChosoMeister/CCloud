@@ -22,4 +22,17 @@
     <string name="cine_loading">Loading</string>
     <!-- Ratings: %1$s = source label, %2$s = value -->
     <string name="cine_rating_cd">%1$s rating %2$s out of 10</string>
+    <!-- Home -->
+    <string name="cine_home">Home</string>
+    <string name="cine_rail_continue">Continue Watching</string>
+    <string name="cine_rail_new_movies">Newly Added Movies</string>
+    <string name="cine_rail_top_movies">Top IMDb Movies</string>
+    <string name="cine_rail_new_series">Newly Added Series</string>
+    <string name="cine_rail_top_series">Top IMDb Series</string>
+    <string name="cine_rail_my_list">My List</string>
+    <string name="cine_action_play">Play</string>
+    <string name="cine_action_resume">Resume</string>
+    <string name="cine_action_details">Details</string>
+    <string name="cine_partial_notice">Some sections couldn\'t load.</string>
+    <string name="cine_progress_cd">%1$d%% watched</string>
 </resources>

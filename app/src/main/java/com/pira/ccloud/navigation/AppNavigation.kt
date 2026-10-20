@@ -42,6 +42,7 @@ fun AppNavigation(
     val seriesViewModel = viewModel<SeriesViewModel>()
     val searchViewModel = viewModel<SearchViewModel>()
     val countryViewModel = viewModel<CountryViewModel>()
+    val homeViewModel = viewModel<com.pira.ccloud.ui.home.HomeViewModel>()
     
     NavHost(
         navController = navController,
@@ -52,7 +53,7 @@ fun AppNavigation(
             SplashScreen(
                 onTimeout = {
                     navController.popBackStack()
-                    navController.navigate(AppScreens.Movies.route) {
+                    navController.navigate(AppScreens.Home.route) {
                         // Prevent re-adding splash to back stack
                         launchSingleTop = true
                     }
@@ -75,6 +76,9 @@ fun AppNavigation(
             )
         }
         
+        composable(route = AppScreens.Home.route) {
+            com.pira.ccloud.ui.home.HomeScreen(viewModel = homeViewModel, navController = navController)
+        }
         composable(route = AppScreens.Movies.route) {
             MoviesScreen(viewModel = moviesViewModel, navController = navController)
         }

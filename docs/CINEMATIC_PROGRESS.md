@@ -6,8 +6,8 @@
 | Phase | State |
 |---|---|
 | A — Inventory, baseline, architecture | ✅ Complete |
-| B — Foundation & design system | 🟡 In progress (domain + tokens + components done; nav foundation, storage scaffolding, progress store pending) |
-| C — Home + adaptive navigation | ⬜ Not started |
+| B — Foundation & design system | ✅ Complete (adaptive scaffold rework deferred to C) |
+| C — Home + adaptive navigation | 🟡 In progress (Home live as start destination; adaptive nav/RTL/UI tests pending) |
 | D — TMDB + rich details | ⬜ |
 | E — Explore/search/recommendations | ⬜ |
 | F — Player polish, TV hardening, docs | ⬜ |
@@ -55,6 +55,14 @@ No project Gradle/AGP/SDK versions were changed.
 - Remaining lint: 21 errors outside new code, all pre-existing legacy: 20× `UnsafeOptInUsageError` in `VideoPlayerActivity.kt`, 1× `NetworkSecurityConfig`. (Baseline lint error count was not captured separately — treat these as pre-existing legacy issues, not regressions; none touch `core/`.)
 - No device/emulator run. Playback/favorites code paths are unchanged (no legacy Kotlin file modified).
 
+### Phase B finish + Phase C start (session 2)
+- **Player resume (local):** `VideoPlayerActivity` gains `EXTRA_MOVIE_ID` + `startWithMovieInfo()`; saves progress on `onPause`/`onDestroy`, seeks once on first READY (or immediately if already READY). Episodes keyed by series/season/episode. All guarded by try/catch; legacy `start()` unchanged. `SingleMovieScreen` now calls `startWithMovieInfo`.
+- `core/home/HomeAssembler.kt` (+`HomeAssemblerTest`, 7 tests): rails, dedupe/cap 20, empty-rail omission, hero selection (backdrop + browsable), partial-failure map.
+- `ui/home/HomeViewModel.kt`: 4 parallel first-page catalog requests (new/top-IMDb movies & series, server-side sorts), Continue Watching from `ProgressStore` + cached title files, My List from existing `favorites.json`. `LoadState` Ready/Partial/Failed/Empty.
+- `ui/home/HomeScreen.kt`: capped 16:9 hero (≤360dp phone / 420dp TV) with scrims, Play only when real catalog source exists, Details; rails of `PosterCard`; landscape `ProgressCard` with real progress; skeleton; error with Retry; partial notice; refreshes local rails on resume.
+- Navigation: `AppScreens.Home` (route `home`) added first in bottom bar/sidebar; Splash → Home. Movies tab unchanged.
+- Verification: `testDebugUnitTest assembleDebug lintDebug` → SUCCESS, **46 tests, 0 failures**; lint 21 errors = same legacy set. **Not device-tested.**
+
 ## Decisions
 - The app's catalog is **server-hi-speed-iran.info**, not 30nama; there is no login/session/subscription in this codebase. `SubscriptionRequired` state exists for future use but nothing emits it today.
 - Existing screens untouched in Phase B; new code lives under `com.pira.ccloud.core`.
@@ -68,8 +76,10 @@ No project Gradle/AGP/SDK versions were changed.
 - No resume-position persistence in `VideoPlayerActivity`.
 
 ## Next actions
-1. Phase B remainder: `ProgressStore` (SharedPreferences, bounded, keyed by `PlaybackProgress.key`) + wire save/restore into `VideoPlayerActivity` with position tests; `CatalogProvider` interface over existing repos with MockWebServer-free fake tests; adaptive scaffold (`WindowSize` → bottom bar / rail / TV sidebar).
-2. Phase C: `HomeScreen` + `HomeViewModel` using `MovieRepository`/`SeriesRepository` pages as rails; add `home` route as start destination after splash.
+1. Manual check on phone + TV emulator: Home loads, hero Play starts playback, back returns to Home, resume works after reopening a movie, D-pad traverses hero→rails.
+2. Phase C remainder: Compose UI tests for Home states (fake ViewModel input via `HomeAssembler`); TV focus restoration (save focused key per rail); tablet/landscape densities; bottom-bar inset padding check with 6 tabs; enable `supportsRtl` after RTL review of legacy screens + Persian legacy strings.
+3. Wire `RetryPolicy` into `BaseRepository` with fixture tests (Phase C/D boundary).
+4. Phase D: optional TMDB provider (user token, TTL cache from tizen `tmdb.js` values), details enrichment.
 
 Resume command:
 ```bash

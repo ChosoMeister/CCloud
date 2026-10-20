@@ -19,4 +19,16 @@
     <string name="cine_empty_title">هنوز چیزی اینجا نیست</string>
     <string name="cine_loading">در حال بارگذاری</string>
     <string name="cine_rating_cd">امتیاز %1$s: %2$s از ۱۰</string>
+    <string name="cine_home">خانه</string>
+    <string name="cine_rail_continue">ادامه تماشا</string>
+    <string name="cine_rail_new_movies">فیلم‌های تازه</string>
+    <string name="cine_rail_top_movies">برترین فیلم‌ها در IMDb</string>
+    <string name="cine_rail_new_series">سریال‌های تازه</string>
+    <string name="cine_rail_top_series">برترین سریال‌ها در IMDb</string>
+    <string name="cine_rail_my_list">فهرست من</string>
+    <string name="cine_action_play">پخش</string>
+    <string name="cine_action_resume">ادامه پخش</string>
+    <string name="cine_action_details">جزئیات</string>
+    <string name="cine_partial_notice">برخی بخش‌ها بارگذاری نشدند.</string>
+    <string name="cine_progress_cd">%1$d%% دیده شده</string>
 </resources>

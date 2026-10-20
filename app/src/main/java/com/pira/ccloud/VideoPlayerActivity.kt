@@ -135,6 +135,7 @@ class VideoPlayerActivity : ComponentActivity() {
         const val EXTRA_SERIES_ID = "series_id"
         const val EXTRA_SEASON_ID = "season_id"
         const val EXTRA_EPISODE_ID = "episode_id"
+        const val EXTRA_MOVIE_ID = "movie_id"
         const val REQUEST_WRITE_SETTINGS = 1001
         
         fun start(context: Context, videoUrl: String) {
@@ -153,6 +154,15 @@ class VideoPlayerActivity : ComponentActivity() {
             }
             context.startActivity(intent)
         }
+
+        /** Movie playback with local resume support (progress keyed by catalog movie id). */
+        fun startWithMovieInfo(context: Context, videoUrl: String, movieId: Int) {
+            val intent = Intent(context, VideoPlayerActivity::class.java).apply {
+                putExtra(EXTRA_VIDEO_URL, videoUrl)
+                putExtra(EXTRA_MOVIE_ID, movieId)
+            }
+            context.startActivity(intent)
+        }
     }
     
     private var exoPlayer: ExoPlayer? = null
@@ -163,6 +173,49 @@ class VideoPlayerActivity : ComponentActivity() {
     private var playerInitialized = false
     private var isActivityResumed = false
     private var hasMarkedAsWatched = false
+    private var movieId: Int? = null
+    private var progressStore: com.pira.ccloud.core.playback.ProgressStore? = null
+    private var resumeApplied = false
+
+    /** Catalog id + optional season/episode for progress, or null when unknown (legacy start()). */
+    private fun progressTarget(): Triple<Int, Int?, Int?>? = when {
+        seriesId != null && episodeId != null -> Triple(seriesId!!, seasonId, episodeId)
+        movieId != null -> Triple(movieId!!, null, null)
+        else -> null
+    }
+
+    private fun saveProgress() {
+        try {
+            val player = exoPlayer ?: return
+            val (id, season, episode) = progressTarget() ?: return
+            val pos = player.currentPosition
+            if (pos <= 0) return
+            progressStore?.save(id, season, episode, pos, player.duration.coerceAtLeast(0))
+        } catch (_: Exception) { /* never affect playback */ }
+    }
+
+    private fun attachResume(player: ExoPlayer) {
+        val (id, season, episode) = progressTarget() ?: return
+        val key = com.pira.ccloud.core.playback.PlaybackProgress.key(id, season, episode)
+        val entry = progressStore?.get(key) ?: return
+        fun apply() {
+            if (resumeApplied) return
+            resumeApplied = true
+            try {
+                val target = com.pira.ccloud.core.playback.PlaybackProgress
+                    .resumePosition(entry.positionMs, player.duration.takeIf { it > 0 } ?: entry.durationMs)
+                if (target > 0 && player.currentPosition < target) player.seekTo(target)
+            } catch (_: Exception) { }
+        }
+        if (player.playbackState == androidx.media3.common.Player.STATE_READY) { apply(); return }
+        player.addListener(object : androidx.media3.common.Player.Listener {
+            override fun onPlaybackStateChanged(state: Int) {
+                if (state != androidx.media3.common.Player.STATE_READY) return
+                player.removeListener(this)
+                apply()
+            }
+        })
+    }
     
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -180,6 +233,10 @@ class VideoPlayerActivity : ComponentActivity() {
         seriesId = intent.getIntExtra(EXTRA_SERIES_ID, -1).takeIf { it != -1 }
         seasonId = intent.getIntExtra(EXTRA_SEASON_ID, -1).takeIf { it != -1 }
         episodeId = intent.getIntExtra(EXTRA_EPISODE_ID, -1).takeIf { it != -1 }
+        movieId = intent.getIntExtra(EXTRA_MOVIE_ID, -1).takeIf { it != -1 }
+        progressStore = try {
+            com.pira.ccloud.core.playback.ProgressStore(com.pira.ccloud.core.playback.SharedPrefsKeyValueStore(this))
+        } catch (_: Exception) { null }
         
         if (videoUrl != null) {
             setContent {
@@ -192,6 +249,7 @@ class VideoPlayerActivity : ComponentActivity() {
                 ) { player ->
                     exoPlayer = player
                     playerInitialized = true
+                    if (!resumeApplied) try { attachResume(player) } catch (_: Exception) { }
                 }
             }
         } else {
@@ -275,6 +333,7 @@ class VideoPlayerActivity : ComponentActivity() {
     }
     
     override fun onDestroy() {
+        saveProgress()
         super.onDestroy()
         try {
             exoPlayer?.release()
@@ -316,6 +375,7 @@ class VideoPlayerActivity : ComponentActivity() {
     override fun onPause() {
         super.onPause()
         isActivityResumed = false
+        saveProgress()
         
         // Stop player completely when activity pauses (app switch or screen off)
         try {
