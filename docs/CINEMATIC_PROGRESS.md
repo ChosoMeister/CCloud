@@ -86,3 +86,9 @@ Resume command:
 export JAVA_HOME=/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home
 ./gradlew --init-script scripts/dev/mirror-init.gradle.kts testDebugUnitTest assembleDebug lintDebug
 ```
+
+## Session update — emulator validation + Phase D start
+- Emulator (medium_phone, API 36, arm64): Home renders live catalog (hero, rails, Not-available badges), Play opens VideoPlayerActivity, Back returns to Home, 0 CCloud crashes.
+- Resume E2E NOT yet validated: catalog stream host timed out from this network (ExoPlayer SocketTimeoutException), so position stayed 0 and nothing was saved (by design, pos<=0 is skipped). VideoPlayerActivity is not exported and AVD is non-root, so a public test stream cannot be injected via `am start`. Next: retry on Android16-Root AVD or a reachable stream; or add a debug-only test hook.
+- Phase D: data layer committed (86568eb) — TmdbDtos/TmdbParser/TtlCache/TmdbRepository + 20 tests (66 total, 0 failures). UI wiring (Settings token, details enrichment, attribution) pending.
+- TMDB access: no token-free official API. Free account → free API key / v4 read token (non-commercial, attribution required). Token is user-entered in Settings, never embedded in APK. Shared token would require a proxy (not built).
