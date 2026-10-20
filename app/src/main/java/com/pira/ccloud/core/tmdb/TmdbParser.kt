@@ -40,6 +40,11 @@ data class Review(val id: String, val author: String, val content: String, val c
 data class MetadataTitle(val tmdbId: Int, val type: ContentType, val title: String, val year: Int?,
                          val posterUrl: String?, val rating: Rating?)
 
+/** A TMDB trending title with full art. Metadata-only until matched to the catalog. */
+data class TrendingTitle(val tmdbId: Int, val type: ContentType, val title: String, val originalTitle: String?,
+                         val year: Int?, val overview: String?, val backdropUrl: String?, val posterUrl: String?,
+                         val rating: Rating?)
+
 object TmdbImages {
     private const val BASE = "https://image.tmdb.org/t/p/"
     /** Sized URLs; never request "original" for cards. */
@@ -71,6 +76,17 @@ object TmdbParser {
         tmdbJson.decodeFromString<TmdbSearchResponse>(json).results
             .filter { it.mediaType != "person" }
             .map { candidate(it, type) }
+
+    /** `/trending/...` or `/movie/now_playing` lists. Items without a backdrop are dropped. */
+    fun trending(json: String, defaultType: ContentType): List<TrendingTitle> =
+        tmdbJson.decodeFromString<TmdbSearchResponse>(json).results
+            .filter { it.mediaType != "person" && it.backdropPath != null }
+            .map {
+                val c = candidate(it, defaultType)
+                TrendingTitle(it.id, c.type, c.title, c.originalTitle, c.year, it.overview,
+                    TmdbImages.backdrop(it.backdropPath, "original"), TmdbImages.poster(it.posterPath, "w780"),
+                    ratingOf(it.voteAverage, it.voteCount))
+            }
 
     /** `/find/{imdb}`: candidates carry the IMDb id so the matcher can accept them by external id. */
     fun findCandidates(json: String, imdbId: String): List<MatchCandidate> {

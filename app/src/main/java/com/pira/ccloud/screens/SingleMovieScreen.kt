@@ -98,6 +98,7 @@ fun SingleMovieScreen(
                 com.pira.ccloud.ui.details.GenreNavigation.pendingMovieGenre = genreId
                 navController.navigate("movies") { launchSingleTop = true }
             },
+            onOpenCatalog = { p -> com.pira.ccloud.ui.details.openCatalogPoster(context, navController, p) },
         )
     } else {
         // Show loading or error state
@@ -133,6 +134,7 @@ fun MovieDetailsContent(
     onPlayClick: (Source) -> Unit,
     modifier: Modifier = Modifier,
     onGenreClick: (Int) -> Unit = {},
+    onOpenCatalog: ((com.pira.ccloud.data.model.Poster) -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val layoutDirection = LocalLayoutDirection.current
@@ -240,7 +242,7 @@ fun MovieDetailsContent(
             )
         }
 
-        enrichment?.let { com.pira.ccloud.ui.details.EnrichmentSection(it) }
+        enrichment?.let { com.pira.ccloud.ui.details.EnrichmentSection(it, onOpenCatalog = onOpenCatalog) }
         
         // Sources/Quality options
         if (movie.sources.isNotEmpty()) {

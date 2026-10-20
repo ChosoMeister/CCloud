@@ -141,6 +141,7 @@ fun SingleSeriesScreen(
             series = series!!,
             seasonsViewModel = seasonsViewModel,
             onBackClick = { navController.popBackStack() },
+            onOpenCatalog = { p -> com.pira.ccloud.ui.details.openCatalogPoster(context, navController, p) },
             onEpisodeClick = { episode ->
                 if (episode.sources.isNotEmpty() && series != null) {
                     val selectedSeason = seasonsViewModel.seasons[selectedSeasonIndex]
@@ -392,7 +393,8 @@ fun SeriesDetailsContent(
     onBackClick: () -> Unit,
     onEpisodeClick: (Episode) -> Unit,
     onDownloadClick: (Episode) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onOpenCatalog: ((com.pira.ccloud.data.model.Poster) -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val layoutDirection = LocalLayoutDirection.current
@@ -728,7 +730,7 @@ fun SeriesDetailsContent(
 
         enrichment?.let { e ->
             item(key = "tmdb_enrichment") {
-                com.pira.ccloud.ui.details.EnrichmentSection(e, Modifier.padding(top = 16.dp))
+                com.pira.ccloud.ui.details.EnrichmentSection(e, Modifier.padding(top = 16.dp), onOpenCatalog)
             }
         }
         

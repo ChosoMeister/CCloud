@@ -120,6 +120,29 @@ class TmdbRepository(
 
     fun clearCache() { matches.clear(); details.clear() }
 
+    @Volatile private var trendingCache: Pair<Long, List<TrendingTitle>>? = null
+
+    /**
+     * Home spotlight feed. TMDB has no weekly box-office figures, so "now playing" sorted by
+     * popularity is the box-office proxy; it is followed by this week's trending movies and series.
+     */
+    suspend fun trending(): List<TrendingTitle> {
+        if (!isEnabled()) return emptyList()
+        trendingCache?.let { (t, list) -> if (clock() - t < 30 * 60_000L && list.isNotEmpty()) return list }
+        val lang = mapOf("language" to language())
+        val lists = coroutineScope {
+            listOf(
+                async { runCatching { TmdbParser.trending(call("/movie/now_playing", lang + ("page" to "1")), ContentType.MOVIE) }.getOrDefault(emptyList()) },
+                async { runCatching { TmdbParser.trending(call("/trending/movie/week", lang), ContentType.MOVIE) }.getOrDefault(emptyList()) },
+                async { runCatching { TmdbParser.trending(call("/trending/tv/week", lang), ContentType.SERIES) }.getOrDefault(emptyList()) },
+                async { runCatching { TmdbParser.trending(call("/trending/movie/week", lang + ("page" to "2")), ContentType.MOVIE) }.getOrDefault(emptyList()) },
+            ).map { it.await() }
+        }
+        val merged = lists.flatten().distinctBy { "${it.type}:${it.tmdbId}" }
+        if (merged.isNotEmpty()) trendingCache = clock() to merged
+        return merged
+    }
+
     private suspend fun doEnrich(key: String, titles: List<String>, year: Int?, type: ContentType, imdbId: String?): EnrichmentResult = try {
         val match = when (val cached = matches.get(key)) {
             is MatchCache.Hit -> cached

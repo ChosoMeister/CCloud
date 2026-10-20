@@ -143,3 +143,12 @@ object GenreNavigation {
     var pendingMovieGenre by mutableStateOf<Int?>(null)
     var pendingSeriesGenre by mutableStateOf<Int?>(null)
 }
+
+/** Opens a catalog search result in the existing details screens (they read cached files). */
+fun openCatalogPoster(context: android.content.Context, nav: androidx.navigation.NavController, p: com.pira.ccloud.data.model.Poster) {
+    if (p.isSeries()) {
+        com.pira.ccloud.utils.StorageUtils.saveSeriesToFile(context, p.toSeries()); nav.navigate("single_series/${p.id}")
+    } else {
+        com.pira.ccloud.utils.StorageUtils.saveMovieToFile(context, p.toMovie()); nav.navigate("single_movie/${p.id}")
+    }
+}

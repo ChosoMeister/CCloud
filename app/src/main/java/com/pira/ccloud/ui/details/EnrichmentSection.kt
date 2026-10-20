@@ -32,6 +32,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
+import kotlinx.coroutines.async
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -76,7 +77,8 @@ fun rememberEnrichment(catalogKey: String, titles: List<String>, year: Int?, typ
 /** Cast, crew, trailer, reviews and recommendations from TMDB, with attribution. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun EnrichmentSection(e: Enrichment, modifier: Modifier = Modifier) {
+fun EnrichmentSection(e: Enrichment, modifier: Modifier = Modifier,
+                      onOpenCatalog: ((com.pira.ccloud.data.model.Poster) -> Unit)? = null) {
     val context = LocalContext.current
     Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(18.dp)) {
         if (e.genres.isNotEmpty()) {
@@ -116,10 +118,20 @@ fun EnrichmentSection(e: Enrichment, modifier: Modifier = Modifier) {
                 e.reviews.take(3).forEach { ReviewCard(it) }
             }
         }
-        if (e.recommendations.isNotEmpty()) {
-            SectionTitle("More like this")
-            LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                items(e.recommendations, key = { it.tmdbId }) { RecommendationCard(it) }
+        if (e.recommendations.isNotEmpty() && onOpenCatalog != null) {
+            // Only titles that are actually in the catalog (playable) are shown.
+            val available by produceState<List<Pair<MetadataTitle, com.pira.ccloud.data.model.Poster>>>(emptyList(), e.tmdbId) {
+                value = kotlinx.coroutines.coroutineScope {
+                    e.recommendations.take(20).map { m ->
+                        async { com.pira.ccloud.core.catalog.CatalogLookup.find(m.title, null, m.year, m.type)?.let { m to it } }
+                    }.mapNotNull { it.await() }
+                }
+            }
+            if (available.isNotEmpty()) {
+                SectionTitle("More like this")
+                LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    items(available, key = { it.first.tmdbId }) { (m, p) -> RecommendationCard(m) { onOpenCatalog(p) } }
+                }
             }
         }
         Text("Metadata and images provided by TMDB. This product uses the TMDB API but is not endorsed or certified by TMDB.",
@@ -164,8 +176,8 @@ private fun ReviewCard(r: Review) {
 }
 
 @Composable
-private fun RecommendationCard(m: MetadataTitle) {
-    Column(Modifier.width(110.dp)) {
+private fun RecommendationCard(m: MetadataTitle, onClick: () -> Unit) {
+    Column(Modifier.width(110.dp).clip(RoundedCornerShape(12.dp)).clickable(onClick = onClick)) {
         AsyncImage(m.posterUrl, m.title, contentScale = ContentScale.Crop,
             modifier = Modifier.fillMaxWidth().aspectRatio(2f / 3f).clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceVariant))
         Text(m.title, color = TextHi, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp))

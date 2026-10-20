@@ -29,6 +29,14 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.withContext
+import com.pira.ccloud.core.catalog.CatalogLookup
+import com.pira.ccloud.core.model.CatalogTitle
+import com.pira.ccloud.core.model.ContentType
+import com.pira.ccloud.core.tmdb.TmdbProvider
+import com.pira.ccloud.core.tmdb.TrendingTitle
+
+/** A spotlight slide: a playable catalog title with TMDB art/overview. */
+data class SpotlightItem(val title: CatalogTitle, val tmdb: TrendingTitle)
 
 /**
  * Cinematic Home: built only from the existing catalog API (4 parallel first-page requests)
@@ -48,7 +56,38 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
     private var job: Job? = null
     private var catalogCache: Map<RailKind, RailResult> = emptyMap()
 
-    init { refresh() }
+    private val _spotlight = MutableStateFlow<List<SpotlightItem>>(emptyList())
+    /** Top-10 TMDB box-office / trending titles that are actually available in the catalog. */
+    val spotlight: StateFlow<List<SpotlightItem>> = _spotlight.asStateFlow()
+    private var spotlightJob: Job? = null
+
+    init { refresh(); loadSpotlight() }
+
+    fun loadSpotlight() {
+        spotlightJob?.cancel()
+        spotlightJob = viewModelScope.launch {
+            val trending = try { TmdbProvider.repository(getApplication()).trending() }
+                catch (e: CancellationException) { throw e } catch (_: Exception) { emptyList() }
+            val result = mutableListOf<SpotlightItem>()
+            // Resolve in small ordered batches so the top of the chart wins and we stop at 10.
+            for (batch in trending.take(60).chunked(8)) {
+                val found = supervisorScope {
+                    batch.map { t -> async { t to CatalogLookup.find(t.title, t.originalTitle, t.year, t.type) } }.map { it.await() }
+                }
+                for ((t, poster) in found) {
+                    if (poster == null || result.size >= 10) continue
+                    val title = if (t.type == ContentType.MOVIE) {
+                        val m = poster.toMovie(); synchronized(movies) { movies[m.id] = m }; m.toCatalogTitle()
+                    } else {
+                        val s = poster.toSeries(); synchronized(series) { series[s.id] = s }; s.toCatalogTitle()
+                    }
+                    if (result.none { it.title.stableKey == title.stableKey }) result += SpotlightItem(title, t)
+                }
+                if (result.size >= 10) break
+            }
+            _spotlight.value = result.toList()
+        }
+    }
 
     fun refresh() {
         job?.cancel()

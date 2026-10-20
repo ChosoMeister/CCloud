@@ -94,6 +94,7 @@ import com.pira.ccloud.utils.StorageUtils
 @Composable
 fun HomeScreen(viewModel: HomeViewModel, navController: NavController) {
     val state by viewModel.state.collectAsState()
+    val spotlight by viewModel.spotlight.collectAsState()
     val context = LocalContext.current
     val isTv = remember { DeviceUtils.isTv(context) }
     val isTablet = remember { DeviceUtils.isTablet(context) }
@@ -134,21 +135,22 @@ fun HomeScreen(viewModel: HomeViewModel, navController: NavController) {
             LoadState.Loading -> HomeSkeleton(gutter, posterWidth)
             LoadState.Empty -> EmptyState(Modifier.align(Alignment.Center))
             is LoadState.Failed -> ErrorState(s.failure, viewModel::refresh, Modifier.align(Alignment.Center))
-            is LoadState.Ready -> HomeBody(s.data, false, gutter, posterWidth, isTv, play, openDetails)
-            is LoadState.Partial -> HomeBody(s.data, true, gutter, posterWidth, isTv, play, openDetails)
+            is LoadState.Ready -> HomeBody(s.data, spotlight, false, gutter, posterWidth, isTv, play, openDetails)
+            is LoadState.Partial -> HomeBody(s.data, spotlight, true, gutter, posterWidth, isTv, play, openDetails)
         }
     }
 }
 
 @Composable
 private fun HomeBody(
-    content: HomeContent, partial: Boolean, gutter: Dp, posterWidth: Dp, isTv: Boolean,
+    content: HomeContent, spotlight: List<SpotlightItem>, partial: Boolean, gutter: Dp, posterWidth: Dp, isTv: Boolean,
     onPlay: (CatalogTitle) -> Unit, onDetails: (CatalogTitle) -> Unit,
 ) {
-    val heroes = remember(content) {
-        (listOfNotNull(content.hero) + content.rails.filter { it.kind != RailKind.CONTINUE_WATCHING && it.kind != RailKind.MY_LIST }
+    val heroes: List<Pair<CatalogTitle, com.pira.ccloud.core.tmdb.TrendingTitle?>> = remember(content, spotlight) {
+        if (spotlight.isNotEmpty()) spotlight.map { it.title to it.tmdb }
+        else (listOfNotNull(content.hero) + content.rails.filter { it.kind != RailKind.CONTINUE_WATCHING && it.kind != RailKind.MY_LIST }
             .flatMap { it.items }.filter { it.backdropUrl != null && it.availability.isPlayable })
-            .distinctBy { it.stableKey }.take(8)
+            .distinctBy { it.stableKey }.take(8).map { it to null }
     }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 112.dp)) {
         // Always emit the hero slot first so late-arriving heroes never leave the list scrolled past it.
@@ -166,7 +168,7 @@ private fun HomeBody(
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun HeroCarousel(
-    heroes: List<CatalogTitle>, gutter: Dp, isTv: Boolean,
+    heroes: List<Pair<CatalogTitle, com.pira.ccloud.core.tmdb.TrendingTitle?>>, gutter: Dp, isTv: Boolean,
     onPlay: (CatalogTitle) -> Unit, onDetails: (CatalogTitle) -> Unit,
 ) {
     val pager = rememberPagerState { heroes.size }
@@ -182,8 +184,9 @@ private fun HeroCarousel(
     val landscape = config.screenWidthDp > config.screenHeightDp
     val height = if (landscape) config.screenHeightDp.dp else (config.screenHeightDp * 0.72f).dp
     Box(Modifier.fillMaxWidth().height(height)) {
-        HorizontalPager(pager, Modifier.fillMaxSize(), key = { heroes[it].stableKey }) { page ->
-            HeroPage(heroes[page], gutter, isTv, landscape, onPlay, onDetails)
+        HorizontalPager(pager, Modifier.fillMaxSize(), key = { heroes[it].first.stableKey }) { page ->
+            val (t, spot) = heroes[page]
+            HeroPage(t, spot, if (spot != null) page + 1 else null, gutter, isTv, landscape, onPlay, onDetails)
         }
         if (heroes.size > 1) {
             Row(
@@ -203,17 +206,17 @@ private fun HeroCarousel(
 
 @Composable
 private fun HeroPage(
-    hero: CatalogTitle, gutter: Dp, isTv: Boolean, landscape: Boolean,
+    hero: CatalogTitle, spot: com.pira.ccloud.core.tmdb.TrendingTitle?, rank: Int?, gutter: Dp, isTv: Boolean, landscape: Boolean,
     onPlay: (CatalogTitle) -> Unit, onDetails: (CatalogTitle) -> Unit,
 ) {
     val centered = !landscape
     Box(Modifier.fillMaxSize()) {
-        // Sharp artwork: TMDB backdrop/poster at screen-appropriate size, catalog art as fallback.
-        val e = com.pira.ccloud.ui.details.rememberEnrichment(
+        // Spotlight items already carry original-size TMDB art; others are enriched on demand.
+        val e = if (spot == null) com.pira.ccloud.ui.details.rememberEnrichment(
             if (hero.ref.type == ContentType.MOVIE) "movie:${hero.ref.catalogId}" else "series:${hero.ref.catalogId}",
-            listOf(hero.title), hero.year, hero.ref.type)
-        val tmdbArt = if (landscape) com.pira.ccloud.ui.details.sharpBackdrop(e?.backdropUrl)
-            else com.pira.ccloud.ui.details.sharpBackdrop(e?.posterUrl)
+            listOf(hero.title), hero.year, hero.ref.type) else null
+        val tmdbArt = com.pira.ccloud.ui.details.sharpBackdrop(
+            if (landscape) spot?.backdropUrl ?: e?.backdropUrl else spot?.posterUrl ?: e?.posterUrl)
         if (tmdbArt != null) {
             AsyncImage(model = tmdbArt, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
         } else {
@@ -240,7 +243,12 @@ private fun HeroPage(
             horizontalAlignment = if (centered) Alignment.CenterHorizontally else Alignment.Start,
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Text(hero.title, color = Color.White, fontSize = if (isTv) 40.sp else 30.sp, lineHeight = if (isTv) 44.sp else 34.sp,
+            rank?.let {
+                Text("TOP 10  ·  #$it", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold,
+                    modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(Color(0xFFE50914))
+                        .padding(horizontal = 10.dp, vertical = 4.dp))
+            }
+            Text(spot?.title ?: hero.title, color = Color.White, fontSize = if (isTv) 40.sp else 30.sp, lineHeight = if (isTv) 44.sp else 34.sp,
                 fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis,
                 textAlign = if (centered) TextAlign.Center else TextAlign.Start,
                 modifier = Modifier.semantics { heading() })
@@ -252,7 +260,7 @@ private fun HeroPage(
                 hero.genres.take(2).takeIf { it.isNotEmpty() }?.let { add(it.joinToString(", ")) }
             }.joinToString("  ·  ")
             Text(meta, color = Color.White.copy(alpha = 0.85f), fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            val synopsis = (e?.overview?.takeIf { it.isNotBlank() } ?: hero.synopsis)
+            val synopsis = (spot?.overview?.takeIf { it.isNotBlank() } ?: e?.overview?.takeIf { it.isNotBlank() } ?: hero.synopsis)
                 .lines().filterNot { it.trim().startsWith("نام اصلی") }.joinToString(" ").trim()
             if (synopsis.isNotBlank()) {
                 Text(synopsis, color = Color.White.copy(alpha = 0.75f), fontSize = 13.sp, maxLines = 2,
