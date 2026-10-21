@@ -3,7 +3,6 @@ package com.pira.ccloud.navigation
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -16,6 +15,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.currentBackStackEntryAsState
+import com.pira.ccloud.core.designsystem.liquidGlassSurface
 
 private val PillShape = RoundedCornerShape(32.dp)
 private val ItemShape = RoundedCornerShape(26.dp)
@@ -45,18 +46,16 @@ fun BottomNavigationBar(navController: NavController, modifier: Modifier = Modif
         modifier = modifier
             .padding(horizontal = 16.dp, vertical = 10.dp)
             .fillMaxWidth()
-            .clip(PillShape)
-            .background(Color(0xE61B1C22))
-            .border(1.dp, Color.White.copy(alpha = 0.10f), PillShape)
+            .liquidGlassSurface(PillShape, MaterialTheme.colorScheme.surface.copy(alpha = 0.94f))
             .padding(6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         AppScreens.screens.filter { it.showBottomBar }.forEach { screen ->
             val isSelected = currentRoute == screen.route
             val bg by animateColorAsState(
-                if (isSelected) Color.White.copy(alpha = 0.16f) else Color.Transparent, tween(200), label = "bg")
+                if (isSelected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent, tween(200), label = "bg")
             val fg by animateColorAsState(
-                if (isSelected) Color.White else Color.White.copy(alpha = 0.6f), tween(200), label = "fg")
+                if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant, tween(200), label = "fg")
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier

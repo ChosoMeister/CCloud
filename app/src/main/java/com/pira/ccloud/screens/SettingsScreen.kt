@@ -48,7 +48,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -66,9 +68,13 @@ import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import com.pira.ccloud.BuildConfig
 import com.pira.ccloud.R
+import com.pira.ccloud.core.tmdb.TmdbCredentials
+import com.pira.ccloud.core.tmdb.TmdbProvider
 import com.pira.ccloud.data.model.SubtitleSettings
 import com.pira.ccloud.data.model.VideoPlayerSettings
 import com.pira.ccloud.data.model.FontSettings
@@ -123,11 +129,21 @@ fun SettingsScreen(
     var latestVersionUrl by remember { mutableStateOf("") }
     var isCheckingUpdate by remember { mutableStateOf(false) }
     var watchedEpisodesCacheSize by remember { mutableStateOf(0L) }
+    val tmdbCredentials = remember(context) { TmdbCredentials(context) }
+    var tmdbToken by remember { mutableStateOf(tmdbCredentials.value.orEmpty()) }
+    var showTmdbToken by remember { mutableStateOf(false) }
+    var showTmdbInstructions by remember { mutableStateOf(false) }
+    var tmdbStatus by remember {
+        mutableStateOf(if (tmdbCredentials.value != null) "Your TMDB key is active" else if (BuildConfig.TMDB_TOKEN.isNotBlank()) "Built-in developer key is active" else "TMDB is disabled")
+    }
     
     // Focus requesters for handling TV remote navigation
-    val focusRequester = remember { FocusRequester() }
     val themeCardFocusRequester = remember { FocusRequester() }
     val videoCardFocusRequester = remember { FocusRequester() }
+    val fontCardFocusRequester = remember { FocusRequester() }
+    val watchedCardFocusRequester = remember { FocusRequester() }
+    val tmdbCardFocusRequester = remember { FocusRequester() }
+    val tmdbInputFocusRequester = remember { FocusRequester() }
     val aboutCardFocusRequester = remember { FocusRequester() }
     val updateCardFocusRequester = remember { FocusRequester() }
     val resetCardFocusRequester = remember { FocusRequester() }
@@ -289,9 +305,7 @@ fun SettingsScreen(
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
-            .padding(16.dp)
-            .focusRequester(focusRequester)
-            .focusable(),
+            .padding(16.dp),
     ) {
         item {
             AnimatedVisibility(
@@ -334,7 +348,11 @@ fun SettingsScreen(
         // Theme Settings Card
         item {
             var isExpanded by remember { mutableStateOf(false) }
-            val focusRequester = remember { FocusRequester() }
+            val firstThemeOptionFocusRequester = remember { FocusRequester() }
+
+            LaunchedEffect(isExpanded) {
+                if (isExpanded) firstThemeOptionFocusRequester.requestFocus()
+            }
             
             AnimatedVisibility(
                 visible = true,
@@ -348,7 +366,7 @@ fun SettingsScreen(
                         .focusable()
                         .focusRequester(themeCardFocusRequester)
                         .focusProperties {
-                            down = videoCardFocusRequester
+                            down = if (isExpanded) firstThemeOptionFocusRequester else videoCardFocusRequester
                         }
                         .onKeyEvent { keyEvent ->
                             when (keyEvent.key) {
@@ -401,6 +419,7 @@ fun SettingsScreen(
                                     mode = ThemeMode.LIGHT,
                                     label = "Light",
                                     isSelected = themeSettings.themeMode == ThemeMode.LIGHT,
+                                    focusRequester = firstThemeOptionFocusRequester,
                                     onSelect = { mode ->
                                         val newSettings = themeSettings.copy(themeMode = mode)
                                         updateThemeSettings(newSettings)
@@ -518,7 +537,7 @@ fun SettingsScreen(
                         .focusRequester(videoCardFocusRequester)
                         .focusProperties {
                             up = themeCardFocusRequester
-                            down = aboutCardFocusRequester
+                            down = fontCardFocusRequester
                         }
                         .onKeyEvent { keyEvent ->
                             when (keyEvent.key) {
@@ -691,7 +710,11 @@ fun SettingsScreen(
                         .fillMaxWidth()
                         .clickable { isExpanded = !isExpanded }
                         .focusable()
-                        .focusRequester(remember { FocusRequester() })
+                        .focusRequester(fontCardFocusRequester)
+                        .focusProperties {
+                            up = videoCardFocusRequester
+                            down = watchedCardFocusRequester
+                        }
                         .onKeyEvent { keyEvent ->
                             when (keyEvent.key) {
                                 Key.Enter, Key.Spacebar -> {
@@ -788,7 +811,11 @@ fun SettingsScreen(
                         .fillMaxWidth()
                         .clickable { showClearWatchedEpisodesDialog = true }
                         .focusable()
-                        .focusRequester(remember { FocusRequester() })
+                        .focusRequester(watchedCardFocusRequester)
+                        .focusProperties {
+                            up = fontCardFocusRequester
+                            down = tmdbCardFocusRequester
+                        }
                         .onKeyEvent { keyEvent ->
                             when (keyEvent.key) {
                                 Key.Enter, Key.Spacebar -> {
@@ -849,6 +876,73 @@ fun SettingsScreen(
                 Spacer(modifier = Modifier.height(16.dp))
             }
         }
+
+        item {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 16.dp)
+                    .clickable { tmdbInputFocusRequester.requestFocus() }
+                    .focusable()
+                    .focusRequester(tmdbCardFocusRequester)
+                    .focusProperties {
+                        up = watchedCardFocusRequester
+                        down = aboutCardFocusRequester
+                    }
+                    .onKeyEvent { event ->
+                        when (event.key) {
+                            Key.Enter, Key.NumPadEnter, Key.DirectionCenter, Key.Spacebar -> {
+                                tmdbInputFocusRequester.requestFocus()
+                                true
+                            }
+                            else -> false
+                        }
+                    },
+                elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+            ) {
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("TMDB API key", style = MaterialTheme.typography.titleLarge)
+                    Text(tmdbStatus, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    OutlinedTextField(
+                        value = tmdbToken,
+                        onValueChange = { tmdbToken = it },
+                        modifier = Modifier.fillMaxWidth().focusRequester(tmdbInputFocusRequester),
+                        label = { Text("API key or Read Access Token") },
+                        singleLine = true,
+                        visualTransformation = if (showTmdbToken) VisualTransformation.None else PasswordVisualTransformation(),
+                        trailingIcon = {
+                            TextButton(onClick = { showTmdbToken = !showTmdbToken }) {
+                                Text(if (showTmdbToken) "Hide" else "Show")
+                            }
+                        }
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = {
+                            val value = tmdbToken.trim()
+                            if (value.isEmpty()) {
+                                tmdbStatus = if (BuildConfig.TMDB_TOKEN.isNotBlank()) "Built-in developer key is active" else "TMDB is disabled"
+                                Toast.makeText(context, "Enter a TMDB key first", Toast.LENGTH_SHORT).show()
+                            } else {
+                                tmdbCredentials.value = value
+                                tmdbToken = value
+                                tmdbStatus = "Your TMDB key is active"
+                                TmdbProvider.invalidateRepository()
+                                Toast.makeText(context, "TMDB key saved", Toast.LENGTH_SHORT).show()
+                            }
+                        }) { Text("Save key") }
+                        OutlinedButton(onClick = {
+                            tmdbCredentials.value = null
+                            tmdbToken = ""
+                            tmdbStatus = if (BuildConfig.TMDB_TOKEN.isNotBlank()) "Built-in developer key is active" else "TMDB is disabled"
+                            TmdbProvider.invalidateRepository()
+                            Toast.makeText(context, if (BuildConfig.TMDB_TOKEN.isNotBlank()) "Using the built-in key" else "TMDB key removed", Toast.LENGTH_SHORT).show()
+                        }) { Text("Use built-in key") }
+                    }
+                    TextButton(onClick = { showTmdbInstructions = true }) { Text("How to create and enter a key") }
+                }
+            }
+        }
+
         
         // About Card
         item {
@@ -866,7 +960,7 @@ fun SettingsScreen(
                         .focusable()
                         .focusRequester(aboutCardFocusRequester)
                         .focusProperties {
-                            up = videoCardFocusRequester
+                            up = tmdbCardFocusRequester
                             down = updateCardFocusRequester
                         }
                         .onKeyEvent { keyEvent ->
@@ -1076,6 +1170,25 @@ fun SettingsScreen(
             Spacer(modifier = Modifier.height(24.dp))
         }
     }
+
+    if (showTmdbInstructions) {
+        AlertDialog(
+            onDismissRequest = { showTmdbInstructions = false },
+            title = { Text("Create a TMDB key") },
+            text = {
+                Text("1. Sign in or create an account at themoviedb.org.\n2. Open Account Settings → API and request a Developer API credential.\n3. Copy either the v3 API key or v4 Read Access Token.\n4. Paste it above and tap Save key.\n\nYour key is saved on this device and takes priority. If you clear it, CCloud uses the built-in developer key when available.")
+            },
+            confirmButton = { TextButton(onClick = { showTmdbInstructions = false }) { Text("Got it") } },
+            dismissButton = {
+                TextButton(onClick = {
+                    showTmdbInstructions = false
+                    runCatching {
+                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://www.themoviedb.org/settings/api")))
+                    }
+                }) { Text("Open TMDB") }
+            }
+        )
+    }
     
     // Reset confirmation dialog
     if (showResetDialog) {
@@ -1174,16 +1287,15 @@ fun ThemeModeOption(
     mode: ThemeMode,
     label: String,
     isSelected: Boolean,
+    focusRequester: FocusRequester? = null,
     onSelect: (ThemeMode) -> Unit
 ) {
-    val focusRequester = remember { FocusRequester() }
-    
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .then(focusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
             .clickable { onSelect(mode) }
             .focusable()
-            .focusRequester(focusRequester)
             .onKeyEvent { keyEvent ->
                 when (keyEvent.key) {
                     Key.Enter, Key.Spacebar -> {

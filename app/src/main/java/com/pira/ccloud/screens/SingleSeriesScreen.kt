@@ -1,5 +1,8 @@
+@file:OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
+
 package com.pira.ccloud.screens
 
+import com.pira.ccloud.core.designsystem.tvFocusIndicator
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -48,6 +51,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -83,7 +88,8 @@ fun SingleSeriesScreen(
     seriesId: Int,
     navController: NavController
 ) {
-    var series by remember { mutableStateOf<Series?>(null) }
+    var series by remember(seriesId) { mutableStateOf(StorageUtils.cachedSeries(seriesId)) }
+    var metadataLoading by remember(seriesId) { mutableStateOf(series == null) }
     val context = LocalContext.current
     val seasonsViewModel: SeasonsViewModel = viewModel()
     var selectedEpisode by remember { mutableStateOf<Episode?>(null) }
@@ -93,7 +99,9 @@ fun SingleSeriesScreen(
     var selectedSeasonIndex by remember { mutableStateOf(0) }
     
     LaunchedEffect(seriesId) {
-        series = StorageUtils.loadSeriesFromFile(context, seriesId)
+        try {
+            if (series == null) series = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { StorageUtils.loadSeriesFromFile(context, seriesId) }
+        } finally { metadataLoading = false }
         seasonsViewModel.loadSeasons(seriesId)
     }
     
@@ -136,12 +144,27 @@ fun SingleSeriesScreen(
     }
     
     // Directly render content without Scaffold since it's already in MainScreen's Scaffold
-    if (series != null) {
+    if (metadataLoading) {
+        Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background), contentAlignment = Alignment.Center) {
+            androidx.compose.material3.CircularProgressIndicator(Modifier.size(24.dp))
+        }
+    } else if (series != null) {
         SeriesDetailsContent(
             series = series!!,
             seasonsViewModel = seasonsViewModel,
             onBackClick = { navController.popBackStack() },
             onOpenCatalog = { p -> com.pira.ccloud.ui.details.openCatalogPoster(context, navController, p) },
+            onFilterGenre = { genre ->
+                com.pira.ccloud.ui.search.SearchNavigation.pendingFilter = com.pira.ccloud.ui.search.PendingSearchFilter(
+                    com.pira.ccloud.core.model.ContentType.SERIES, genre = genre)
+                navController.navigate("search") { launchSingleTop = true }
+            },
+            onFilterPerson = { person ->
+                com.pira.ccloud.ui.search.SearchNavigation.pendingFilter = com.pira.ccloud.ui.search.PendingSearchFilter(
+                    com.pira.ccloud.core.model.ContentType.SERIES,
+                    person = com.pira.ccloud.ui.search.TmdbPersonFilter(person.id, person.name))
+                navController.navigate("search") { launchSingleTop = true }
+            },
             onEpisodeClick = { episode ->
                 if (episode.sources.isNotEmpty() && series != null) {
                     val selectedSeason = seasonsViewModel.seasons[selectedSeasonIndex]
@@ -247,14 +270,14 @@ fun SourceOptionsDialog(
         },
         confirmButton = {
             Column(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.tvFocusIndicator().fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 // Play buttons for each source/quality
                 episode.sources.forEach { source ->
                     Button(
                         onClick = { onPlay(source) },
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.tvFocusIndicator().fillMaxWidth(),
                         shape = RoundedCornerShape(16.dp),
                         elevation = androidx.compose.material3.ButtonDefaults.elevatedButtonElevation()
                     ) {
@@ -271,7 +294,7 @@ fun SourceOptionsDialog(
                 // Cancel button
                 TextButton(
                     onClick = onDismiss,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.tvFocusIndicator().fillMaxWidth(),
                     shape = RoundedCornerShape(16.dp)
                 ) {
                     Text("Cancel")
@@ -341,7 +364,7 @@ fun DownloadMenu(
             },
             confirmButton = {
                 Column(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.tvFocusIndicator().fillMaxWidth(),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     sources.forEach { source ->
@@ -350,7 +373,7 @@ fun DownloadMenu(
                                 selectedSource = source
                                 showDownloadOptions = true
                             },
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier.tvFocusIndicator().fillMaxWidth(),
                             shape = RoundedCornerShape(16.dp),
                             colors = androidx.compose.material3.ButtonDefaults.buttonColors(
                                 containerColor = MaterialTheme.colorScheme.primaryContainer,
@@ -371,7 +394,7 @@ fun DownloadMenu(
                     // Cancel button
                     TextButton(
                         onClick = onDismiss,
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.tvFocusIndicator().fillMaxWidth(),
                         shape = RoundedCornerShape(16.dp)
                     ) {
                         Text("Cancel")
@@ -395,35 +418,48 @@ fun SeriesDetailsContent(
     onDownloadClick: (Episode) -> Unit,
     modifier: Modifier = Modifier,
     onOpenCatalog: ((com.pira.ccloud.data.model.Poster) -> Unit)? = null,
+    onFilterGenre: ((com.pira.ccloud.core.tmdb.TmdbGenre) -> Unit)? = null,
+    onFilterPerson: ((com.pira.ccloud.core.tmdb.Person) -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val layoutDirection = LocalLayoutDirection.current
+    val isTv = com.pira.ccloud.utils.DeviceUtils.isTv(context)
+    val backFocus = remember { FocusRequester() }
+    val inputMode = androidx.compose.ui.platform.LocalInputModeManager.current
+    LaunchedEffect(series.id) {
+        if (isTv) {
+            inputMode.requestInputMode(androidx.compose.ui.input.InputMode.Keyboard)
+            androidx.compose.runtime.withFrameNanos { }
+            backFocus.requestFocus()
+        }
+    }
     var selectedSeasonIndex by remember { mutableStateOf(0) }
     var showEpisodeImageDialog by remember { mutableStateOf(false) }
     var episodeImageUrl by remember { mutableStateOf("") }
     
     val enrichment = com.pira.ccloud.ui.details.rememberEnrichment(
         "series:${series.id}", listOf(series.title), series.year.takeIf { it > 0 },
-        com.pira.ccloud.core.model.ContentType.SERIES,
+        com.pira.ccloud.core.model.ContentType.SERIES, countries = series.country.map { it.title },
     )
 
     LazyColumn(
         modifier = modifier
             .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
     ) {
         item {
             // Series header with background cover and foreground image
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(300.dp)
+                    .height(if (isTv) 300.dp else 300.dp)
             ) {
                 // Background cover image (blurred)
                 Image(
                     painter = rememberAsyncImagePainter(
                         ImageRequest.Builder(LocalContext.current)
                             .data(enrichment?.backdropUrl ?: series.cover)
-                            .crossfade(true)
+                            .crossfade(!com.pira.ccloud.utils.DeviceUtils.isTv(LocalContext.current))
                             .build()
                     ),
                     contentDescription = null,
@@ -433,25 +469,23 @@ fun SeriesDetailsContent(
                     contentScale = ContentScale.Crop
                 )
                 
-                // Gradient overlay for better text visibility
+                // Preserve the banner image; use a bottom scrim only for readable details.
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .background(
-                            androidx.compose.ui.graphics.Brush.verticalGradient(
-                                colors = listOf(
-                                    MaterialTheme.colorScheme.surface.copy(alpha = 0.5f),
-                                    MaterialTheme.colorScheme.surface
-                                )
-                            )
-                        )
+                        .background(androidx.compose.ui.graphics.Brush.verticalGradient(
+                            0f to Color.Black.copy(alpha = 0.12f),
+                            0.32f to Color.Black.copy(alpha = 0.12f),
+                            0.58f to Color.Black.copy(alpha = 0.50f),
+                            1f to Color(0xFF0B0B0D).copy(alpha = 0.96f),
+                        ))
                 )
                 
                 // Row to contain poster and series details side by side
                 Row(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(16.dp),
+                        .padding(if (isTv) 28.dp else 16.dp),
                     verticalAlignment = Alignment.Bottom
                 ) {
                     // Foreground series poster
@@ -461,14 +495,14 @@ fun SeriesDetailsContent(
                         painter = rememberAsyncImagePainter(
                             ImageRequest.Builder(LocalContext.current)
                                 .data(series.image)
-                                .crossfade(true)
+                                .crossfade(!com.pira.ccloud.utils.DeviceUtils.isTv(LocalContext.current))
                                 .build()
                         ),
                         contentDescription = series.title,
                         modifier = Modifier
-                            .height(200.dp)
+                            .height(if (isTv) 150.dp else 200.dp)
                             .clip(RoundedCornerShape(8.dp))
-                            .clickable { showImageDialog = true },
+                            .tvFocusIndicator().clickable { showImageDialog = true },
                         contentScale = ContentScale.Fit
                     )
                     
@@ -551,7 +585,7 @@ fun SeriesDetailsContent(
                 // Back button
                 IconButton(
                     onClick = onBackClick,
-                    modifier = Modifier
+                    modifier = Modifier.focusRequester(backFocus).tvFocusIndicator()
                         .padding(16.dp)
                         .align(Alignment.TopStart)
                 ) {
@@ -679,7 +713,7 @@ fun SeriesDetailsContent(
                                 Text(
                                     text = genre.title,
                                     style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                    color = if (isTv) Color(0xFF17171A) else MaterialTheme.colorScheme.onPrimaryContainer,
                                     fontWeight = FontWeight.Medium,
                                     maxLines = 1
                                 )
@@ -723,16 +757,13 @@ fun SeriesDetailsContent(
                     text = series.description,
                     modifier = Modifier
                         .padding(start = 16.dp, end = 16.dp)
-                        .fillMaxWidth()
+                        .fillMaxWidth(),
+                    textColor = MaterialTheme.colorScheme.onSurface,
+                    actionColor = MaterialTheme.colorScheme.primary
                 )
             }
         }
 
-        enrichment?.let { e ->
-            item(key = "tmdb_enrichment") {
-                com.pira.ccloud.ui.details.EnrichmentSection(e, Modifier.padding(top = 16.dp), onOpenCatalog)
-            }
-        }
         
         // Seasons selection
         if (seasonsViewModel.seasons.isNotEmpty()) {
@@ -757,7 +788,7 @@ fun SeriesDetailsContent(
                         val season = seasonsViewModel.seasons[index]
                         Card(
                             modifier = Modifier
-                                .clickable { selectedSeasonIndex = index },
+                                .tvFocusIndicator().clickable { selectedSeasonIndex = index },
                             colors = CardDefaults.cardColors(
                                 containerColor = if (selectedSeasonIndex == index) 
                                     MaterialTheme.colorScheme.primary 
@@ -853,6 +884,13 @@ fun SeriesDetailsContent(
             }
         }
         
+        enrichment?.let { e ->
+            item(key = "tmdb_enrichment") {
+                com.pira.ccloud.ui.details.EnrichmentSection(e, Modifier.padding(top = 16.dp), onOpenCatalog,
+                    onFilterGenre, onFilterPerson)
+            }
+        }
+
         item {
             Spacer(modifier = Modifier.height(16.dp))
         }
@@ -897,14 +935,14 @@ fun EpisodeItem(
                             painter = rememberAsyncImagePainter(
                                 ImageRequest.Builder(LocalContext.current)
                                     .data(episode.image)
-                                    .crossfade(true)
+                                    .crossfade(!com.pira.ccloud.utils.DeviceUtils.isTv(LocalContext.current))
                                     .build()
                             ),
                             contentDescription = episode.title,
                             modifier = Modifier
                                 .size(60.dp)
                                 .clip(RoundedCornerShape(8.dp))
-                                .clickable { onImageClick(episode.image) },
+                                .tvFocusIndicator().clickable { onImageClick(episode.image) },
                             contentScale = ContentScale.Crop
                         )
                         
@@ -976,7 +1014,7 @@ fun EpisodeItem(
                 if (episode.sources.isNotEmpty()) {
                     IconButton(
                         onClick = { onDownloadClick() },
-                        modifier = Modifier
+                        modifier = Modifier.tvFocusIndicator()
                             .size(36.dp)
                     ) {
                         Icon(
@@ -993,7 +1031,7 @@ fun EpisodeItem(
                 // Play button
                 IconButton(
                     onClick = { onPlayClick() },
-                    modifier = Modifier
+                    modifier = Modifier.tvFocusIndicator()
                         .size(36.dp)
                 ) {
                     Icon(

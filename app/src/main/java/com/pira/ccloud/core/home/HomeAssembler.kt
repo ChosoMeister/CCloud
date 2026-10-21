@@ -6,12 +6,15 @@ import com.pira.ccloud.core.network.FailureKind
 import com.pira.ccloud.core.playback.ProgressEntry
 
 /** Rails the Home screen can show. Sorting semantics are server-side for the whole catalog. */
-enum class RailKind { CONTINUE_WATCHING, NEW_MOVIES, TOP_IMDB_MOVIES, NEW_SERIES, TOP_IMDB_SERIES, MY_LIST }
+enum class RailKind { CONTINUE_WATCHING, NEW_MOVIES, TOP_IMDB_MOVIES, NEW_SERIES, TOP_IMDB_SERIES, MY_LIST, TMDB }
 
 data class ContinueItem(val title: CatalogTitle, val progress: ProgressEntry)
 
-data class HomeRail(val kind: RailKind, val items: List<CatalogTitle>, val continueItems: List<ContinueItem> = emptyList()) {
+data class HomeRail(val kind: RailKind, val items: List<CatalogTitle>, val continueItems: List<ContinueItem> = emptyList(),
+                    /** Display title for TMDB-curated rails (only titles available in the catalog). */
+                    val customTitle: String? = null) {
     val isEmpty: Boolean get() = items.isEmpty() && continueItems.isEmpty()
+    val key: String get() = customTitle?.let { "tmdb:$it" } ?: kind.name
 }
 
 data class HomeContent(

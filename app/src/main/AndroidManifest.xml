@@ -32,6 +32,7 @@
             android:name=".MainActivity"
             android:exported="true"
             android:label="@string/app_name"
+            android:banner="@drawable/tv_banner"
             android:theme="@style/Theme.CCloud"
             android:configChanges="orientation|screenSize|keyboardHidden"
             android:hardwareAccelerated="true">

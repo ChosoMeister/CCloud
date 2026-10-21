@@ -1,6 +1,10 @@
 package com.pira.ccloud.navigation
 
-import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -23,7 +27,6 @@ import com.pira.ccloud.ui.search.SearchViewModel
 import com.pira.ccloud.ui.series.SeriesViewModel
 import com.pira.ccloud.ui.country.CountryViewModel
 import com.pira.ccloud.ui.theme.ThemeSettings
-import com.pira.ccloud.ui.theme.ThemeManager
 import com.pira.ccloud.data.model.FontSettings // Add this import
 import androidx.compose.ui.platform.LocalContext
 
@@ -34,8 +37,7 @@ fun AppNavigation(
     onFontSettingsChanged: (FontSettings) -> Unit = {} // Add this parameter
 ) {
     val context = LocalContext.current
-    val themeManager = ThemeManager(context)
-    val themeSettings = themeManager.loadThemeSettings()
+    val isTv = com.pira.ccloud.utils.DeviceUtils.isTv(context)
     
     // Create ViewModels here to preserve their state across navigation
     val moviesViewModel = viewModel<MoviesViewModel>()
@@ -46,10 +48,14 @@ fun AppNavigation(
     
     NavHost(
         navController = navController,
-        startDestination = AppScreens.Splash.route
+        startDestination = AppScreens.Splash.route,
+        // Keep D-pad focus and the visible destination in sync on TV; avoid overlapping pages.
+        enterTransition = { if (isTv) EnterTransition.None else fadeIn(tween(700)) },
+        exitTransition = { if (isTv) ExitTransition.None else fadeOut(tween(700)) },
+        popEnterTransition = { if (isTv) EnterTransition.None else fadeIn(tween(700)) },
+        popExitTransition = { if (isTv) ExitTransition.None else fadeOut(tween(700)) },
     ) {
         composable(route = AppScreens.Splash.route) {
-            val isSystemInDarkMode = isSystemInDarkTheme()
             SplashScreen(
                 onTimeout = {
                     navController.popBackStack()
@@ -58,21 +64,7 @@ fun AppNavigation(
                         launchSingleTop = true
                     }
                 },
-                backgroundColor = when (themeSettings.themeMode) {
-                    com.pira.ccloud.ui.theme.ThemeMode.DARK -> {
-                        androidx.compose.ui.graphics.Color(0xFF121212)
-                    }
-                    com.pira.ccloud.ui.theme.ThemeMode.LIGHT -> {
-                        androidx.compose.ui.graphics.Color(0xFFFFFBFE)
-                    }
-                    com.pira.ccloud.ui.theme.ThemeMode.SYSTEM -> {
-                        if (isSystemInDarkMode) {
-                            androidx.compose.ui.graphics.Color(0xFF121212)
-                        } else {
-                            androidx.compose.ui.graphics.Color(0xFFFFFBFE)
-                        }
-                    }
-                }
+                backgroundColor = androidx.compose.material3.MaterialTheme.colorScheme.background
             )
         }
         

@@ -66,35 +66,53 @@ jobs:
         with:
           gradle-version: wrapper
 
-      - name: Decode Keystore
+      - name: Configure release signing
+        env:
+          KEY_STORE_B64: ${{ secrets.KEY_STORE }}
+          KEY_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
         run: |
-          echo "${{ secrets.KEY_STORE }}" | base64 --decode > app/keystore.jks
-        continue-on-error: true
-
-      - name: Create keystore properties file
-        run: |
-          echo "storePassword=${{ secrets.KEY_STORE_PASSWORD }}" > key.properties
-          echo "keyPassword=${{ secrets.KEY_PASSWORD }}" >> key.properties
-          echo "keyAlias=${{ secrets.KEY_ALIAS }}" >> key.properties
-          echo "storeFile=keystore.jks" >> key.properties
-        continue-on-error: true
+          set -euo pipefail
+          if [[ -z "$KEY_STORE_B64" || -z "$KEY_STORE_PASSWORD" || -z "$KEY_PASSWORD" || -z "$KEY_ALIAS" ]]; then
+            echo "Release signing secrets are required; refusing to publish an APK with a temporary signing key."
+            exit 1
+          fi
+          printf '%s' "$KEY_STORE_B64" | base64 --decode > app/keystore.jks
+          keytool -list -keystore app/keystore.jks -storepass "$KEY_STORE_PASSWORD" -alias "$KEY_ALIAS" >/dev/null
+          {
+            printf 'storePassword=%s\n' "$KEY_STORE_PASSWORD"
+            printf 'keyPassword=%s\n' "$KEY_PASSWORD"
+            printf 'keyAlias=%s\n' "$KEY_ALIAS"
+            printf 'storeFile=keystore.jks\n'
+          } > key.properties
 
       - name: Build APK
+        env:
+          TMDB_TOKEN: ${{ secrets.TMDB_TOKEN }}
         run: |
-          ./gradlew assembleRelease --stacktrace -x lint
+          ./gradlew testTvOptimizedUnitTest assembleRelease --stacktrace -x lint
 
       - name: Rename APK
         run: |
+          test -s app/build/outputs/apk/release/app-universal-release.apk
           mkdir -p release
           cp app/build/outputs/apk/release/app-universal-release.apk release/CCloud-universal.apk
+          unzip -t release/CCloud-universal.apk >/dev/null
 
       - name: Get tag name
         id: get_tag
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
         run: |
           if [[ $GITHUB_EVENT_NAME == 'workflow_dispatch' ]]; then
-            TAG_NAME=${{ github.event.inputs.tag }}
+            TAG_NAME="$INPUT_TAG"
           else
             TAG_NAME=${GITHUB_REF#refs/tags/}
+          fi
+          if [[ ! "$TAG_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Release tag must use vMAJOR.MINOR.PATCH."
+            exit 1
           fi
           echo "TAG_NAME=$TAG_NAME" >> $GITHUB_ENV
           echo "Tag name: $TAG_NAME"
@@ -113,12 +131,12 @@ jobs:
             ## CCloud Release ${{ env.TAG_NAME }}
             
             ### What's New
-            - Modernized UI with enhanced user experience
-            - Improved performance and stability
-            - New features and bug fixes
+            - One universal APK for Android phones/tablets and Android TV
+            - Cinematic home, improved title details, and TMDB genre discovery
+            - Progressive genre pagination follows TMDB's reported page count
             
             ### Download Options
-            - [Universal APK (all architectures)](https://github.com/${{ github.repository }}/releases/download/${{ env.TAG_NAME }}/CCloud-universal.apk) - Compatible with all devices
+            - [Universal APK for Android and Android TV](https://github.com/${{ github.repository }}/releases/download/${{ env.TAG_NAME }}/CCloud-universal.apk)
 
             ### Installation
             1. Download the appropriate APK file for your device

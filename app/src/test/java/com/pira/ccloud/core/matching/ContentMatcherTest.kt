@@ -86,6 +86,46 @@ class ContentMatcherTest {
         assertTrue(ContentMatcher.match(q, listOf(cand(949, "Heat", 1995))) is MatchResult.Unmatched) // 0.9 < 0.95
     }
 
+    @Test fun literalTitleDisambiguatesArticleCollapsedMovieNames() {
+        val r = ContentMatcher.match(MatchQuery(listOf("Sacrifice"), 2026, ContentType.MOVIE),
+            listOf(cand(1706393, "The Sacrifice", 2026, orig = "Offeret"),
+                cand(1284186, "Sacrifice", 2026), cand(1666745, "The Sacrifice", 2026)))
+        assertEquals(1284186, (r as MatchResult.Matched).candidate.providerId)
+    }
+
+    @Test fun twoLiteralMatchesStillStayAmbiguous() {
+        val r = ContentMatcher.match(MatchQuery(listOf("The Sacrifice"), 2026, ContentType.MOVIE),
+            listOf(cand(1284186, "Sacrifice", 2026), cand(1706393, "The Sacrifice", 2026),
+                cand(1666745, "The Sacrifice", 2026)))
+        assertEquals(MatchResult.Reason.AMBIGUOUS, (r as MatchResult.Unmatched).reason)
+    }
+
+    @Test fun articleVariantRemainsMatchableWhenThereIsNoCollision() {
+        val r = ContentMatcher.match(MatchQuery(listOf("Matrix"), 1999, ContentType.MOVIE),
+            listOf(cand(603, "The Matrix", 1999)))
+        assertEquals(603, (r as MatchResult.Matched).candidate.providerId)
+    }
+
+    @Test fun uniqueLiteralTitleCanRecoverWhenCatalogYearDiffers() {
+        val r = ContentMatcher.match(MatchQuery(listOf("Tenzing"), 2025, ContentType.MOVIE),
+            listOf(cand(1288069, "Tenzing", 2026), cand(1743260, "Hillary and Tenzing - Everest and After", 1997),
+                cand(245052, "Hillary and Tenzing: Climbing to the Roof of World", 1997)))
+        assertEquals(1288069, (r as MatchResult.Matched).candidate.providerId)
+        assertEquals(1.0, r.confidence, 0.0)
+    }
+
+    @Test fun duplicateLiteralTitleOutsideCatalogYearStaysAmbiguous() {
+        val r = ContentMatcher.match(MatchQuery(listOf("Hope"), 2025, ContentType.MOVIE),
+            listOf(cand(1058424, "Hope", 2026, orig = "호프"), cand(1590991, "Hope", 2026)))
+        assertEquals(MatchResult.Reason.AMBIGUOUS, (r as MatchResult.Unmatched).reason)
+    }
+
+    @Test fun shortGodOfWarQueryDoesNotAcceptDifferentYearLocalizedOriginalTitle() {
+        val r = ContentMatcher.match(MatchQuery(listOf("God of War"), 2024, ContentType.MOVIE),
+            listOf(cand(455043, "God of War", 2017, orig = "荡寇风云"), cand(770449, "God of War", 2021, orig = "赵子龙")))
+        assertTrue(r is MatchResult.Unmatched)
+    }
+
     @Test fun resultCarriesAlgorithmVersion() {
         val r = ContentMatcher.match(MatchQuery(listOf("X"), 2000, ContentType.MOVIE), emptyList())
         assertEquals(ContentMatcher.ALGORITHM_VERSION, r.algorithmVersion)

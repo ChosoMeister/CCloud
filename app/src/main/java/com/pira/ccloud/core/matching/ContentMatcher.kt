@@ -37,13 +37,13 @@ object TitleNormalizer {
         return sb.toString()
     }
 
-    fun normalize(raw: String?): String {
+    fun normalize(raw: String?, stripLeadingArticle: Boolean = true): String {
         if (raw.isNullOrBlank()) return ""
         var s = foldArabicScript(raw).lowercase()
         s = Normalizer.normalize(s, Normalizer.Form.NFD).replace(combiningMarks, "")
         s = s.replace("&", " and ")
         s = s.replace(nonWord, " ").trim().replace(Regex("\\s+"), " ")
-        return s.replace(leadingArticle, "")
+        return if (stripLeadingArticle) s.replace(leadingArticle, "") else s
     }
 
     fun stripYear(raw: String): String {
@@ -75,6 +75,7 @@ data class MatchCandidate(
     val originalTitle: String?,
     val year: Int?,
     val imdbId: String? = null,
+    val originalLanguage: String? = null,
 )
 
 data class MatchQuery(
@@ -98,7 +99,7 @@ sealed interface MatchResult {
  */
 object ContentMatcher {
     /** Bump when scoring changes; cached mappings with a different version are invalidated. */
-    const val ALGORITHM_VERSION = 1
+    const val ALGORITHM_VERSION = 2
     const val MIN_TITLE_SIMILARITY = 0.8
     const val ACCEPT_THRESHOLD = 0.95
     private const val AMBIGUITY_MARGIN = 0.05
@@ -146,10 +147,24 @@ object ContentMatcher {
         val scored = candidates.mapNotNull { c -> score(query, c)?.let { c to it } }
             .sortedWith(compareByDescending<Pair<MatchCandidate, Double>> { it.second }.thenBy { it.first.providerId })
         val best = scored.firstOrNull()
-            ?: return MatchResult.Unmatched(MatchResult.Reason.LOW_CONFIDENCE, ALGORITHM_VERSION)
+        if (best == null) return MatchResult.Unmatched(MatchResult.Reason.LOW_CONFIDENCE, ALGORITHM_VERSION)
         if (best.second < ACCEPT_THRESHOLD) return MatchResult.Unmatched(MatchResult.Reason.LOW_CONFIDENCE, ALGORITHM_VERSION)
         val runnerUp = scored.getOrNull(1)
         if (runnerUp != null && best.second - runnerUp.second < AMBIGUITY_MARGIN) {
+            // Article folding helps "Matrix" find "The Matrix", but must not make
+            // "Sacrifice" indistinguishable from unrelated "The Sacrifice" films.
+            // Only disambiguate already-high-confidence contenders using a unique
+            // literal title; identical literal names still remain ambiguous.
+            val literalQueries = query.titles.map {
+                TitleNormalizer.normalize(TitleNormalizer.stripYear(it), stripLeadingArticle = false)
+            }.filter { it.isNotBlank() }.toSet()
+            val literalMatches = scored.takeWhile { best.second - it.second < AMBIGUITY_MARGIN }
+                .filter { (candidate, candidateScore) -> candidateScore >= ACCEPT_THRESHOLD && listOfNotNull(candidate.title, candidate.originalTitle).any {
+                    TitleNormalizer.normalize(TitleNormalizer.stripYear(it), stripLeadingArticle = false) in literalQueries
+                } }.map { it.first }.distinctBy { it.providerId }.singleOrNull()
+            if (literalMatches != null) {
+                return MatchResult.Matched(literalMatches, (score(query, literalMatches) ?: 0.95).coerceAtMost(1.0), false, ALGORITHM_VERSION)
+            }
             return MatchResult.Unmatched(MatchResult.Reason.AMBIGUOUS, ALGORITHM_VERSION)
         }
         return MatchResult.Matched(best.first, best.second.coerceAtMost(1.0), false, ALGORITHM_VERSION)

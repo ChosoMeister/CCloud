@@ -49,6 +49,7 @@ class TmdbParserTest {
         assertNull(e.tagline)
         assertEquals(155, e.runtimeMinutes)
         assertEquals("tt1160419", e.imdbId)
+        assertEquals(TmdbGenre(1, "Science Fiction"), e.genres.single())
         assertEquals(1, e.reviews.size)
         assertEquals("Anonymous", e.reviews[0].author)
         assertEquals("Great", e.reviews[0].content)
@@ -73,6 +74,16 @@ class TmdbParserTest {
         val e = TmdbParser.details("""{"id":1,"name":"S","episode_run_time":[0,52],"first_air_date":"2011-01-01"}""", ContentType.SERIES)
         assertEquals(52, e.runtimeMinutes)
         assertEquals(2011, e.year)
+    }
+
+    @Test fun personCreditsKeepOnlySelectedTypeGenreAndTitleQuery() {
+        val json = """{"cast":[
+            {"id":1,"media_type":"movie","title":"Action Film","genre_ids":[28]},
+            {"id":2,"media_type":"tv","name":"Action Series","genre_ids":[10759]},
+            {"id":3,"media_type":"tv","name":"Drama Series","genre_ids":[18]}]}"""
+        val results = TmdbParser.personCredits(json, ContentType.SERIES, 10759, "action")
+        assertEquals(listOf(2), results.map { it.tmdbId })
+        assertEquals(ContentType.SERIES, results.single().type)
     }
 
     @Test(expected = kotlinx.serialization.SerializationException::class)

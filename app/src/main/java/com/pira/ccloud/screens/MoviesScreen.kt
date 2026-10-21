@@ -1,5 +1,7 @@
 package com.pira.ccloud.screens
 
+import androidx.compose.runtime.saveable.rememberSaveable
+import com.pira.ccloud.core.designsystem.rememberGridReturnFocus
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
@@ -292,24 +294,28 @@ fun MovieGrid(
     onLoadMore: () -> Unit,
     navController: NavController? = null
 ) {
+    var restoreFocusKey by rememberSaveable { androidx.compose.runtime.mutableStateOf<String?>(null) }
     val moviesList = movies.toList()
     val context = LocalContext.current
     
     LazyVerticalGrid(
-        columns = GridCells.Adaptive(minSize = if (DeviceUtils.isTv(context)) 150.dp else 112.dp),
+        columns = GridCells.Adaptive(minSize = if (DeviceUtils.isTv(context)) 130.dp else 112.dp),
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(16.dp),
         horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(14.dp),
         verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(18.dp)
     ) {
-        itemsIndexed(moviesList) { index, movie ->
+        itemsIndexed(moviesList, key = { _, item -> item.id }) { index, movie ->
             MovieItem(
                 movie = movie,
+                focusModifier = rememberGridReturnFocus(movie.id.toString(), restoreFocusKey) { restoreFocusKey = null },
                 onClick = {
+                    restoreFocusKey = movie.id.toString()
+
                     // Save movie to storage
-                    StorageUtils.saveMovieToFile(context, movie)
+                    /* Saved by CatalogNavigation on IO. */
                     // Navigate to single movie screen
-                    navController?.navigate("single_movie/${movie.id}")
+                    navController?.let { com.pira.ccloud.core.catalog.CatalogNavigation.openMovie(context, it, movie) }
                 }
             )
             
@@ -391,7 +397,8 @@ fun ModernCircularProgressIndicator() {
 @Composable
 fun MovieItem(
     movie: Movie,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    focusModifier: Modifier = Modifier,
 ) {
     PosterGridCard(
         title = movie.title,
@@ -399,24 +406,24 @@ fun MovieItem(
         rating = movie.imdb,
         subtitle = listOfNotNull(movie.year.takeIf { it > 0 }?.toString(), movie.genres.firstOrNull()?.title).joinToString(" · "),
         onClick = onClick,
+        focusModifier = focusModifier,
     )
 }
 
 /** Shared cinematic poster card (2:3 artwork, IMDb pill, focus ring) for Movies/Series/Search grids. */
 @Composable
-fun PosterGridCard(title: String, imageUrl: String, rating: Double, subtitle: String, onClick: () -> Unit) {
+fun PosterGridCard(title: String, imageUrl: String, rating: Double, subtitle: String, onClick: () -> Unit, focusModifier: Modifier = Modifier) {
     val interaction = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
     val focused by interaction.collectIsFocusedAsState()
-    val scale by animateFloatAsState(if (focused) 1.05f else 1f, label = "poster_scale")
-    Column(Modifier.fillMaxWidth().scale(scale)) {
+    Column(Modifier.fillMaxWidth()) {
         Box(
-            Modifier.fillMaxWidth().aspectRatio(2f / 3f).clip(RoundedCornerShape(14.dp))
+            Modifier.then(focusModifier).fillMaxWidth().aspectRatio(2f / 3f).clip(RoundedCornerShape(14.dp))
                 .background(MaterialTheme.colorScheme.surfaceVariant)
-                .then(if (focused) Modifier.border(3.dp, Color.White, RoundedCornerShape(14.dp)) else Modifier)
+                .then(if (focused) Modifier.border(4.dp, Color.White, RoundedCornerShape(14.dp)) else Modifier)
                 .clickable(interactionSource = interaction, indication = androidx.compose.material3.ripple(), onClick = onClick)
         ) {
             coil.compose.AsyncImage(
-                model = ImageRequest.Builder(LocalContext.current).data(imageUrl).crossfade(true).build(),
+                model = ImageRequest.Builder(LocalContext.current).data(imageUrl).crossfade(!com.pira.ccloud.utils.DeviceUtils.isTv(LocalContext.current)).build(),
                 contentDescription = title, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize(),
             )
             if (rating > 0) {
@@ -430,7 +437,9 @@ fun PosterGridCard(title: String, imageUrl: String, rating: Double, subtitle: St
             }
         }
         Text(title, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, maxLines = 1,
-            overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.padding(top = 8.dp))
+            overflow = TextOverflow.Ellipsis, color = if (focused) Color.Black else MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.padding(top = 8.dp).fillMaxWidth().clip(RoundedCornerShape(4.dp))
+                .background(if (focused) Color.White else Color.Transparent).padding(horizontal = 4.dp, vertical = 4.dp))
         if (subtitle.isNotBlank()) {
             Text(subtitle, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)

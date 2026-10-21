@@ -1,5 +1,10 @@
+@file:OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
+
 package com.pira.ccloud.ui.details
 
+import com.pira.ccloud.core.designsystem.tvFocusIndicator
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -33,6 +38,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -47,6 +56,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.pira.ccloud.utils.DeviceUtils
+import androidx.compose.ui.platform.LocalContext
 import coil.compose.AsyncImage
 
 /** A catalog genre chip that can filter the catalog when tapped. */
@@ -76,18 +87,28 @@ fun CinematicDetailsHeader(
     tagline: String? = null,
 ) {
     val cfg = LocalConfiguration.current
+    val isTv = DeviceUtils.isTv(LocalContext.current)
+    val backFocus = remember { FocusRequester() }
+    val inputMode = androidx.compose.ui.platform.LocalInputModeManager.current
+    LaunchedEffect(Unit) {
+        if (isTv) {
+            inputMode.requestInputMode(androidx.compose.ui.input.InputMode.Keyboard)
+            androidx.compose.runtime.withFrameNanos { }
+            backFocus.requestFocus()
+        }
+    }
     val landscape = cfg.screenWidthDp > cfg.screenHeightDp
-    val height = if (landscape) (cfg.screenHeightDp * 0.92f).dp else (cfg.screenHeightDp * 0.62f).dp
-    val bg = MaterialTheme.colorScheme.background
+    val height = if (isTv) (cfg.screenHeightDp * 0.65f).dp.coerceIn(280.dp, 420.dp) else if (landscape) (cfg.screenHeightDp * 0.86f).dp else (cfg.screenHeightDp * 0.62f).dp
+    val bg = Color(0xFF0B0B0D)
     Box(Modifier.fillMaxWidth().height(height)) {
-        AsyncImage(model = sharpBackdrop(bannerUrl), contentDescription = null, contentScale = ContentScale.Crop,
+        AsyncImage(model = bannerUrl?.replace(Regex("/t/p/w\\d+/"), "/t/p/w1280/") ?: sharpBackdrop(bannerUrl), contentDescription = null, contentScale = ContentScale.Crop,
             modifier = Modifier.fillMaxSize())
-        // Keep the image crisp: only a light top scrim and a bottom fade for legibility.
+        // Keep the art visible while protecting text contrast.
         Box(Modifier.fillMaxSize().background(Brush.verticalGradient(
-            0f to Color.Black.copy(alpha = 0.35f), 0.18f to Color.Transparent, 0.55f to Color.Transparent,
-            0.85f to bg.copy(alpha = 0.85f), 1f to bg)))
+            0f to Color.Black.copy(alpha = 0.30f), 0.16f to Color.Transparent, 0.42f to Color.Black.copy(alpha = 0.12f),
+            0.68f to bg.copy(alpha = 0.72f), 1f to bg)))
         Row(Modifier.fillMaxWidth().statusBarsPadding().padding(16.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-            GlassButton(Icons.AutoMirrored.Filled.ArrowBack, "Back", onBack)
+            GlassButton(Icons.AutoMirrored.Filled.ArrowBack, "Back", onBack, modifier = Modifier.focusRequester(backFocus))
             GlassButton(if (isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder, "Favorite", onToggleFavorite,
                 tint = if (isFavorite) Color(0xFFFF4D67) else Color.White)
         }
@@ -96,17 +117,17 @@ fun CinematicDetailsHeader(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Text(title, color = MaterialTheme.colorScheme.onBackground, fontSize = 32.sp, lineHeight = 36.sp,
+            Text(title, color = Color.White, fontSize = if (isTv) 28.sp else 32.sp, lineHeight = if (isTv) 34.sp else 36.sp,
                 fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, maxLines = 3, overflow = TextOverflow.Ellipsis)
             tagline?.takeIf { it.isNotBlank() }?.let {
-                Text(it, color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f), fontSize = 14.sp, textAlign = TextAlign.Center)
+                Text(it, color = Color.White.copy(alpha = 0.86f), fontSize = if (isTv) 13.sp else 14.sp, textAlign = TextAlign.Center)
             }
             if (meta.isNotEmpty()) {
-                Text(meta.joinToString("  ·  "), color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.8f),
-                    fontSize = 13.sp, textAlign = TextAlign.Center)
+                Text(meta.joinToString("  ·  "), color = Color.White.copy(alpha = 0.9f),
+                    fontSize = if (isTv) 12.sp else 13.sp, textAlign = TextAlign.Center)
             }
             if (onPlay != null && playLabel != null) {
-                Button(onClick = onPlay, shape = CircleShape, modifier = Modifier.padding(top = 4.dp).height(54.dp).widthIn(min = 220.dp),
+                Button(onClick = onPlay, shape = CircleShape, modifier = Modifier.padding(top = 4.dp).height(if (isTv) 48.dp else 54.dp).widthIn(min = if (isTv) 180.dp else 220.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFF4F4F6), contentColor = Color(0xFF111114))) {
                     Icon(Icons.Default.PlayArrow, null)
                     Spacer(Modifier.width(8.dp))
@@ -117,11 +138,11 @@ fun CinematicDetailsHeader(
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
                     verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     genres.forEach { g ->
-                        Text(g.title, color = MaterialTheme.colorScheme.onBackground, fontSize = 13.sp,
+                        Text(g.title, color = Color.White, fontSize = if (isTv) 12.sp else 13.sp,
                             modifier = Modifier.clip(CircleShape)
-                                .background(MaterialTheme.colorScheme.onBackground.copy(alpha = 0.10f))
-                                .border(1.dp, MaterialTheme.colorScheme.onBackground.copy(alpha = 0.15f), CircleShape)
-                                .clickable { onGenreClick(g) }.padding(horizontal = 14.dp, vertical = 7.dp))
+                                .background(Color.Black.copy(alpha = 0.34f))
+                                .border(1.dp, Color.White.copy(alpha = 0.28f), CircleShape)
+                                .tvFocusIndicator().clickable { onGenreClick(g) }.padding(horizontal = 14.dp, vertical = 7.dp))
                     }
                 }
             }
@@ -130,12 +151,17 @@ fun CinematicDetailsHeader(
 }
 
 @Composable
-private fun GlassButton(icon: ImageVector, cd: String, onClick: () -> Unit, tint: Color = Color.White) {
+private fun GlassButton(icon: ImageVector, cd: String, onClick: () -> Unit, tint: Color = Color.White, modifier: Modifier = Modifier) {
+    val interaction = remember { MutableInteractionSource() }
+    val focused by interaction.collectIsFocusedAsState()
     Box(
-        Modifier.size(46.dp).clip(CircleShape).background(Color.Black.copy(alpha = 0.35f))
-            .border(1.dp, Color.White.copy(alpha = 0.3f), CircleShape).clickable(onClick = onClick),
+        modifier.size(46.dp).clip(CircleShape)
+            .background(if (focused) Color.White else Color.Black.copy(alpha = 0.35f))
+            .border(if (focused) 3.dp else 1.dp,
+                if (focused) Color.White else Color.White.copy(alpha = 0.3f), CircleShape)
+            .clickable(interactionSource = interaction, indication = null, onClick = onClick),
         contentAlignment = Alignment.Center,
-    ) { Icon(icon, cd, tint = tint) }
+    ) { Icon(icon, cd, tint = if (focused) Color.Black else tint) }
 }
 
 /** Cross-screen request to open the catalog filtered by a genre (consumed by Movies/Series screens). */
@@ -146,9 +172,5 @@ object GenreNavigation {
 
 /** Opens a catalog search result in the existing details screens (they read cached files). */
 fun openCatalogPoster(context: android.content.Context, nav: androidx.navigation.NavController, p: com.pira.ccloud.data.model.Poster) {
-    if (p.isSeries()) {
-        com.pira.ccloud.utils.StorageUtils.saveSeriesToFile(context, p.toSeries()); nav.navigate("single_series/${p.id}")
-    } else {
-        com.pira.ccloud.utils.StorageUtils.saveMovieToFile(context, p.toMovie()); nav.navigate("single_movie/${p.id}")
-    }
+    com.pira.ccloud.core.catalog.CatalogNavigation.openPoster(context, nav, p)
 }

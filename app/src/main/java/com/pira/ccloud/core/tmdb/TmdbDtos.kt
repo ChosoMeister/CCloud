@@ -6,7 +6,13 @@ import kotlinx.serialization.json.Json
 
 /** Raw TMDB v3 response shapes (only fields we use). Unknown fields ignored. */
 @Serializable
-internal data class TmdbSearchResponse(val results: List<TmdbSearchItem> = emptyList())
+internal data class TmdbSearchResponse(
+    val results: List<TmdbSearchItem> = emptyList(),
+    @SerialName("total_pages") val totalPages: Int = 1,
+)
+
+@Serializable
+internal data class TmdbPersonCreditsResponse(val cast: List<TmdbSearchItem> = emptyList())
 
 @Serializable
 internal data class TmdbSearchItem(
@@ -18,11 +24,13 @@ internal data class TmdbSearchItem(
     @SerialName("release_date") val releaseDate: String? = null,
     @SerialName("first_air_date") val firstAirDate: String? = null,
     @SerialName("media_type") val mediaType: String? = null,
+    @SerialName("original_language") val originalLanguage: String? = null,
     @SerialName("poster_path") val posterPath: String? = null,
     @SerialName("backdrop_path") val backdropPath: String? = null,
     @SerialName("vote_average") val voteAverage: Double? = null,
     @SerialName("vote_count") val voteCount: Int? = null,
     val overview: String? = null,
+    @SerialName("genre_ids") val genreIds: List<Int> = emptyList(),
 )
 
 @Serializable
@@ -73,3 +81,9 @@ internal data class TmdbDetailsResponse(
 @Serializable internal data class TmdbAuthorDetails(val rating: Double? = null)
 
 internal val tmdbJson = Json { ignoreUnknownKeys = true; isLenient = true; coerceInputValues = true; explicitNulls = false }
+
+@Serializable
+data class TmdbGenre(val id: Int, val name: String)
+
+@Serializable
+internal data class TmdbGenreResponse(val genres: List<TmdbGenre> = emptyList())

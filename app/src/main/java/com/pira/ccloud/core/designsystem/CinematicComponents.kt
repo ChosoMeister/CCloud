@@ -7,6 +7,7 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -22,6 +23,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -30,7 +32,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.stringResource
@@ -78,9 +79,9 @@ fun RatingPill(rating: Rating, modifier: Modifier = Modifier) {
     val cd = stringResource(R.string.cine_rating_cd, rating.kind.label, rating.formatted())
     Text(
         text = "${rating.kind.label} ${rating.formatted()}",
-        color = CinematicColors.TextPrimary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
+        color = MaterialTheme.colorScheme.onSurface, fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
         modifier = modifier.semantics { contentDescription = cd }
-            .clip(CinematicShapes.chip).background(CinematicColors.SurfaceRaised)
+            .clip(CinematicShapes.chip).background(MaterialTheme.colorScheme.surfaceVariant)
             .padding(horizontal = 8.dp, vertical = 3.dp),
     )
 }
@@ -94,7 +95,7 @@ fun AvailabilityBadge(availability: Availability, modifier: Modifier = Modifier,
         is Availability.Playable -> CinematicColors.Success
         Availability.EpisodesOnDemand -> CinematicColors.Info
         Availability.SubscriptionRequired, Availability.TemporarilyUnavailable -> CinematicColors.Warning
-        else -> CinematicColors.TextTertiary
+        else -> MaterialTheme.colorScheme.onSurfaceVariant
     }
     Text(
         text = stringResource(availability.labelRes()), color = Color.Black, fontSize = 11.sp, fontWeight = FontWeight.Bold,
@@ -105,7 +106,7 @@ fun AvailabilityBadge(availability: Availability, modifier: Modifier = Modifier,
 @Composable
 fun EmptyState(modifier: Modifier = Modifier, message: String = stringResource(R.string.cine_empty_title)) {
     Box(modifier.fillMaxWidth().padding(CinematicSpacing.xxl), contentAlignment = Alignment.Center) {
-        Text(message, color = CinematicColors.TextSecondary, textAlign = TextAlign.Center)
+        Text(message, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
     }
 }
 
@@ -116,10 +117,10 @@ fun ErrorState(failure: FailureKind, onRetry: (() -> Unit)?, modifier: Modifier 
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(CinematicSpacing.lg),
     ) {
-        Text(stringResource(failure.messageRes()), color = CinematicColors.TextPrimary, textAlign = TextAlign.Center)
+        Text(stringResource(failure.messageRes()), color = MaterialTheme.colorScheme.onSurface, textAlign = TextAlign.Center)
         if (onRetry != null) {
             Button(onClick = onRetry, shape = CinematicShapes.button,
-                colors = ButtonDefaults.buttonColors(containerColor = CinematicColors.Accent, contentColor = CinematicColors.OnAccent)) {
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary, contentColor = MaterialTheme.colorScheme.onPrimary)) {
                 Text(stringResource(R.string.cine_action_retry))
             }
         }
@@ -135,11 +136,11 @@ fun LoadingSkeleton(modifier: Modifier = Modifier) {
         t.animateFloat(0.35f, 0.75f, infiniteRepeatable(tween(900), RepeatMode.Reverse), label = "a").value
     }
     val cd = stringResource(R.string.cine_loading)
-    Box(modifier.semantics { contentDescription = cd }.alpha(alpha).clip(CinematicShapes.card).background(CinematicColors.SurfaceRaised))
+    Box(modifier.semantics { contentDescription = cd }.alpha(alpha).clip(CinematicShapes.card).background(MaterialTheme.colorScheme.surfaceVariant))
 }
 
 /**
- * Focus-aware poster card for touch and D-pad. Focus = white ring + scale (distinct from any
+ * Focus-aware poster card for touch and D-pad. Focus = white ring + highlighted title (distinct from any
  * selected/playing state, which uses the accent). Coil loads a size-constrained image.
  */
 @Composable
@@ -148,18 +149,16 @@ fun PosterCard(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     width: Dp = 120.dp,
+    focusModifier: Modifier = Modifier,
 ) {
     val interaction = remember { MutableInteractionSource() }
     val focused by interaction.collectIsFocusedAsState()
-    val reduced = LocalReducedMotion.current
-    val scale by animateFloatAsState(if (focused && !reduced) CinematicMotion.FOCUS_SCALE else 1f,
-        CinematicMotion.standard(reduced), label = "focusScale")
     Column(modifier.width(width)) {
         Box(
-            Modifier.fillMaxWidth().aspectRatio(2f / 3f).scale(scale)
+            Modifier.then(focusModifier).fillMaxWidth().aspectRatio(2f / 3f)
                 .clip(CinematicShapes.card)
-                .then(if (focused) Modifier.border(3.dp, CinematicColors.Focus, CinematicShapes.card) else Modifier)
-                .background(CinematicColors.Surface)
+                .then(if (focused) Modifier.border(4.dp, MaterialTheme.colorScheme.primary, CinematicShapes.card) else Modifier)
+                .background(MaterialTheme.colorScheme.surface)
                 .clickable(interactionSource = interaction, indication = null, onClick = onClick)
                 .semantics { contentDescription = item.title + (item.year?.let { ", $it" } ?: "") },
         ) {
@@ -173,16 +172,19 @@ fun PosterCard(
             } else PosterFallback(item.title)
             AvailabilityBadge(item.availability, Modifier.align(Alignment.TopStart).padding(6.dp))
         }
-        Text(item.title, color = CinematicColors.TextPrimary, fontSize = 13.sp, maxLines = 1,
-            overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 6.dp))
+        Text(item.title, color = if (focused) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
+            fontSize = 13.sp, fontWeight = if (focused) FontWeight.Bold else FontWeight.Normal, maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(top = 6.dp).fillMaxWidth().clip(RoundedCornerShape(4.dp))
+                .background(if (focused) MaterialTheme.colorScheme.primary else Color.Transparent).padding(horizontal = 4.dp, vertical = 4.dp))
     }
 }
 
 /** Honest fallback artwork: the title on a neutral surface (no fake images). */
 @Composable
 private fun PosterFallback(title: String) {
-    Box(Modifier.fillMaxSize().background(CinematicColors.SurfaceRaised).padding(8.dp), contentAlignment = Alignment.Center) {
-        Text(title, color = CinematicColors.TextSecondary, fontSize = 13.sp, textAlign = TextAlign.Center, maxLines = 4,
+    Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant).padding(8.dp), contentAlignment = Alignment.Center) {
+        Text(title, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp, textAlign = TextAlign.Center, maxLines = 4,
             overflow = TextOverflow.Ellipsis)
     }
 }

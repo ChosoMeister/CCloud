@@ -110,6 +110,7 @@ fun AboutScreen(navController: NavController?) {
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+
             
             Spacer(modifier = Modifier.height(32.dp))
             

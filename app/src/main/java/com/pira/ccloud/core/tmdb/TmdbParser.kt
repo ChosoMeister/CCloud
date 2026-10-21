@@ -18,7 +18,7 @@ data class Enrichment(
     val posterUrl: String?,
     val rating: Rating?,
     val imdbId: String?,
-    val genres: List<String>,
+    val genres: List<TmdbGenre>,
     val cast: List<Person>,
     val directors: List<Person>,
     val trailer: Trailer?,
@@ -43,7 +43,9 @@ data class MetadataTitle(val tmdbId: Int, val type: ContentType, val title: Stri
 /** A TMDB trending title with full art. Metadata-only until matched to the catalog. */
 data class TrendingTitle(val tmdbId: Int, val type: ContentType, val title: String, val originalTitle: String?,
                          val year: Int?, val overview: String?, val backdropUrl: String?, val posterUrl: String?,
-                         val rating: Rating?)
+                         val rating: Rating?, val voteCount: Int = 0)
+
+data class TmdbBrowsePage(val titles: List<TrendingTitle>, val page: Int, val totalPages: Int)
 
 object TmdbImages {
     private const val BASE = "https://image.tmdb.org/t/p/"
@@ -69,6 +71,7 @@ object TmdbParser {
             title = item.title ?: item.name ?: "",
             originalTitle = item.originalTitle ?: item.originalName,
             year = yearOf(item.releaseDate ?: item.firstAirDate),
+            originalLanguage = item.originalLanguage,
         )
     }
 
@@ -85,8 +88,48 @@ object TmdbParser {
                 val c = candidate(it, defaultType)
                 TrendingTitle(it.id, c.type, c.title, c.originalTitle, c.year, it.overview,
                     TmdbImages.backdrop(it.backdropPath, "original"), TmdbImages.poster(it.posterPath, "w780"),
-                    ratingOf(it.voteAverage, it.voteCount))
+                    ratingOf(it.voteAverage, it.voteCount), it.voteCount ?: 0)
             }
+
+    fun genres(json: String): List<TmdbGenre> =
+        tmdbJson.decodeFromString<TmdbGenreResponse>(json).genres.filter { it.id > 0 && it.name.isNotBlank() }.distinctBy { it.id }
+
+    /** Search/discover must keep titles without a backdrop; genre filtering is local for /search. */
+    fun browsePage(json: String, type: ContentType, genreId: Int? = null, requestedPage: Int = 1): TmdbBrowsePage {
+        val response = tmdbJson.decodeFromString<TmdbSearchResponse>(json)
+        val titles = response.results
+            .filter { it.mediaType != "person" && (genreId == null || genreId in it.genreIds) }
+            .map { item ->
+                val c = candidate(item, type)
+                TrendingTitle(item.id, c.type, c.title, c.originalTitle, c.year, item.overview,
+                    TmdbImages.backdrop(item.backdropPath), TmdbImages.poster(item.posterPath),
+                    ratingOf(item.voteAverage, item.voteCount), item.voteCount ?: 0)
+            }.filter { it.title.isNotBlank() }
+        return TmdbBrowsePage(titles, requestedPage.coerceAtLeast(1), response.totalPages.coerceAtLeast(1))
+    }
+
+    fun browse(json: String, type: ContentType, genreId: Int? = null): List<TrendingTitle> =
+        browsePage(json, type, genreId).titles
+
+    /** `/person/{id}/combined_credits` cast titles, filtered to the selected media type and genre. */
+    fun personCredits(json: String, type: ContentType, genreId: Int? = null, query: String = ""): List<TrendingTitle> =
+        tmdbJson.decodeFromString<TmdbPersonCreditsResponse>(json).cast
+            .filter { item ->
+                val itemType = when (item.mediaType) {
+                    "movie" -> ContentType.MOVIE
+                    "tv" -> ContentType.SERIES
+                    else -> null
+                }
+                itemType == type && (genreId == null || genreId in item.genreIds) &&
+                    (query.isBlank() || (item.title ?: item.name.orEmpty()).contains(query, ignoreCase = true))
+            }
+            .distinctBy { it.id }
+            .map { item ->
+                val c = candidate(item, type)
+                TrendingTitle(item.id, c.type, c.title, c.originalTitle, c.year, item.overview,
+                    TmdbImages.backdrop(item.backdropPath), TmdbImages.poster(item.posterPath),
+                    ratingOf(item.voteAverage, item.voteCount), item.voteCount ?: 0)
+            }.filter { it.title.isNotBlank() }
 
     /** `/find/{imdb}`: candidates carry the IMDb id so the matcher can accept them by external id. */
     fun findCandidates(json: String, imdbId: String): List<MatchCandidate> {
@@ -112,7 +155,8 @@ object TmdbParser {
             posterUrl = TmdbImages.poster(d.posterPath),
             rating = ratingOf(d.voteAverage, d.voteCount),
             imdbId = (d.imdbId ?: d.externalIds?.imdbId)?.takeIf { it.startsWith("tt") },
-            genres = d.genres.map { it.name }.filter { it.isNotBlank() },
+            genres = d.genres.filter { it.id > 0 && it.name.isNotBlank() }
+                .map { TmdbGenre(it.id, it.name) }.distinctBy { it.id },
             cast = d.credits?.cast.orEmpty().sortedBy { it.order }.take(maxCast)
                 .map { Person(it.id, it.name, it.character?.takeIf { c -> c.isNotBlank() }, TmdbImages.profile(it.profilePath)) },
             directors = d.credits?.crew.orEmpty().filter { it.job == "Director" || it.job == "Creator" }.distinctBy { it.id }

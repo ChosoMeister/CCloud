@@ -1,5 +1,6 @@
 package com.pira.ccloud.screens
 
+import com.pira.ccloud.core.designsystem.tvFocusIndicator
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -76,15 +77,22 @@ fun SingleMovieScreen(
     movieId: Int,
     navController: NavController
 ) {
-    var movie by remember { mutableStateOf<Movie?>(null) }
+    var movie by remember(movieId) { mutableStateOf(StorageUtils.cachedMovie(movieId)) }
+    var metadataLoading by remember(movieId) { mutableStateOf(movie == null) }
     val context = LocalContext.current
     
     LaunchedEffect(movieId) {
-        movie = StorageUtils.loadMovieFromFile(context, movieId)
+        try {
+            if (movie == null) movie = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { StorageUtils.loadMovieFromFile(context, movieId) }
+        } finally { metadataLoading = false }
     }
     
     // Directly render content without Scaffold since it's already in MainScreen's Scaffold
-    if (movie != null) {
+    if (metadataLoading) {
+        Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background), contentAlignment = Alignment.Center) {
+            androidx.compose.material3.CircularProgressIndicator(Modifier.size(24.dp))
+        }
+    } else if (movie != null) {
         MovieDetailsContent(
             movie = movie!!,
             onBackClick = { navController.popBackStack() },
@@ -93,12 +101,23 @@ fun SingleMovieScreen(
                 VideoPlayerActivity.startWithMovieInfo(context, source.url, movie!!.id)
             },
             // Remove any padding from parent Scaffold to use full screen
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background),
             onGenreClick = { genreId ->
                 com.pira.ccloud.ui.details.GenreNavigation.pendingMovieGenre = genreId
                 navController.navigate("movies") { launchSingleTop = true }
             },
             onOpenCatalog = { p -> com.pira.ccloud.ui.details.openCatalogPoster(context, navController, p) },
+            onFilterGenre = { genre ->
+                com.pira.ccloud.ui.search.SearchNavigation.pendingFilter = com.pira.ccloud.ui.search.PendingSearchFilter(
+                    com.pira.ccloud.core.model.ContentType.MOVIE, genre = genre)
+                navController.navigate("search") { launchSingleTop = true }
+            },
+            onFilterPerson = { person ->
+                com.pira.ccloud.ui.search.SearchNavigation.pendingFilter = com.pira.ccloud.ui.search.PendingSearchFilter(
+                    com.pira.ccloud.core.model.ContentType.MOVIE,
+                    person = com.pira.ccloud.ui.search.TmdbPersonFilter(person.id, person.name))
+                navController.navigate("search") { launchSingleTop = true }
+            },
         )
     } else {
         // Show loading or error state
@@ -135,6 +154,8 @@ fun MovieDetailsContent(
     modifier: Modifier = Modifier,
     onGenreClick: (Int) -> Unit = {},
     onOpenCatalog: ((com.pira.ccloud.data.model.Poster) -> Unit)? = null,
+    onFilterGenre: ((com.pira.ccloud.core.tmdb.TmdbGenre) -> Unit)? = null,
+    onFilterPerson: ((com.pira.ccloud.core.tmdb.Person) -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val layoutDirection = LocalLayoutDirection.current
@@ -159,144 +180,150 @@ fun MovieDetailsContent(
     
     val enrichment = com.pira.ccloud.ui.details.rememberEnrichment(
         "movie:${movie.id}", listOf(movie.title), movie.year.takeIf { it > 0 },
-        com.pira.ccloud.core.model.ContentType.MOVIE,
+        com.pira.ccloud.core.model.ContentType.MOVIE, countries = movie.country.map { it.title },
     )
 
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState()),
+    androidx.compose.foundation.lazy.LazyColumn(
+        modifier = modifier.fillMaxSize().background(MaterialTheme.colorScheme.background),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        // Cinematic header: sharp TMDB/catalog banner, centered title, Play pill, tappable genres
-        var isFavorite by remember { mutableStateOf(false) }
-        LaunchedEffect(movie.id) { isFavorite = StorageUtils.isFavorite(context, movie.id, "movie") }
-        val firstSource = movie.sources.firstOrNull { it.url.isNotBlank() }
-        com.pira.ccloud.ui.details.CinematicDetailsHeader(
-            title = movie.title,
-            bannerUrl = enrichment?.backdropUrl ?: movie.cover.ifBlank { movie.image },
-            tagline = enrichment?.tagline,
-            meta = buildList {
-                add("Movie")
-                if (movie.imdb > 0) add("IMDb " + String.format(java.util.Locale.US, "%.1f", movie.imdb))
-                enrichment?.rating?.let { add("TMDB " + it.formatted()) }
-                if (movie.year > 0) add(movie.year.toString())
-                (enrichment?.runtimeMinutes?.let { "${it / 60}h ${it % 60}m" } ?: movie.duration)?.takeIf { it.isNotBlank() }?.let { add(it) }
-                movie.country.firstOrNull()?.let { add(it.title) }
-            },
-            genres = movie.genres.map { com.pira.ccloud.ui.details.GenreChip(it.id, it.title) },
-            playLabel = if (firstSource != null) "Play" else null,
-            isFavorite = isFavorite,
-            onBack = onBackClick,
-            onToggleFavorite = {
-                if (isFavorite) {
-                    StorageUtils.removeFavorite(context, movie.id, "movie"); isFavorite = false
-                    android.widget.Toast.makeText(context, "Removed from favorites", android.widget.Toast.LENGTH_SHORT).show()
-                } else {
-                    StorageUtils.saveFavorite(context, FavoriteItem(
-                        id = movie.id, type = "movie", title = movie.title, description = movie.description,
-                        year = movie.year, imdb = movie.imdb, rating = movie.rating, duration = movie.duration,
-                        image = movie.image, cover = movie.cover, genres = movie.genres, country = movie.country,
-                        sources = movie.sources,
-                    ))
-                    isFavorite = true
-                    android.widget.Toast.makeText(context, "Added to favorites", android.widget.Toast.LENGTH_SHORT).show()
+        item(key = "movie_content") {
+            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                // Cinematic header: sharp TMDB/catalog banner, centered title, Play pill, tappable genres
+                var isFavorite by remember { mutableStateOf(false) }
+                LaunchedEffect(movie.id) { isFavorite = StorageUtils.isFavorite(context, movie.id, "movie") }
+                com.pira.ccloud.ui.details.CinematicDetailsHeader(
+                    title = movie.title,
+                    bannerUrl = enrichment?.backdropUrl ?: movie.cover.ifBlank { movie.image },
+                    tagline = enrichment?.tagline,
+                    meta = buildList {
+                        add("Movie")
+                        if (movie.imdb > 0) add("IMDb " + String.format(java.util.Locale.US, "%.1f", movie.imdb))
+                        enrichment?.rating?.let { add("TMDB " + it.formatted()) }
+                        if (movie.year > 0) add(movie.year.toString())
+                        (enrichment?.runtimeMinutes?.let { "${it / 60}h ${it % 60}m" } ?: movie.duration)?.takeIf { it.isNotBlank() }?.let { add(it) }
+                        movie.country.firstOrNull()?.let { add(it.title) }
+                    },
+                    genres = movie.genres.map { com.pira.ccloud.ui.details.GenreChip(it.id, it.title) },
+                    playLabel = null,
+                    isFavorite = isFavorite,
+                    onBack = onBackClick,
+                    onToggleFavorite = {
+                        if (isFavorite) {
+                            StorageUtils.removeFavorite(context, movie.id, "movie"); isFavorite = false
+                            android.widget.Toast.makeText(context, "Removed from favorites", android.widget.Toast.LENGTH_SHORT).show()
+                        } else {
+                            StorageUtils.saveFavorite(context, FavoriteItem(
+                                id = movie.id, type = "movie", title = movie.title, description = movie.description,
+                                year = movie.year, imdb = movie.imdb, rating = movie.rating, duration = movie.duration,
+                                image = movie.image, cover = movie.cover, genres = movie.genres, country = movie.country,
+                                sources = movie.sources,
+                            ))
+                            isFavorite = true
+                            android.widget.Toast.makeText(context, "Added to favorites", android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                    },
+                    onPlay = null,
+                    onGenreClick = { onGenreClick(it.id) },
+                )
+
+                // Description
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 16.dp, top = 16.dp, end = 16.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Description",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
                 }
-            },
-            onPlay = firstSource?.let { src -> { onPlayClick(src) } },
-            onGenreClick = { onGenreClick(it.id) },
-        )
-
-        // Description
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(start = 16.dp, top = 16.dp, end = 16.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = "Description",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary
-            )
-        }
         
-        enrichment?.overview?.takeIf { it.isNotBlank() }?.let { overview ->
-            Text(
-                text = overview,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.padding(horizontal = 16.dp)
-            )
-        }
+                enrichment?.overview?.takeIf { it.isNotBlank() }?.let { overview ->
+                    Text(
+                        text = overview,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.padding(horizontal = 16.dp)
+                    )
+                }
 
-        // Set layout direction to RTL for the description text
-        CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
-            ExpandableText(
-                text = movie.description,
-                modifier = Modifier
-                    .padding(start = 16.dp, end = 16.dp)
-                    .fillMaxWidth()
-            )
-        }
-
-        enrichment?.let { com.pira.ccloud.ui.details.EnrichmentSection(it, onOpenCatalog = onOpenCatalog) }
-        
-        // Sources/Quality options
-        if (movie.sources.isNotEmpty()) {
-            Text(
-                text = "Available Qualities",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.padding(start = 16.dp, top = 16.dp, end = 16.dp)
-            )
-            
-            Column(
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.padding(start = 16.dp, end = 16.dp)
-            ) {
-                movie.sources.forEach { source ->
-                    Card(
+                // Set layout direction to RTL for the description text
+                CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
+                    ExpandableText(
+                        text = movie.description,
                         modifier = Modifier
+                            .padding(start = 16.dp, end = 16.dp)
                             .fillMaxWidth()
-                            .clickable {
-                                selectedSource = source
-                                showSourceDialog = true
-                            },
-                        colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.surfaceVariant
-                        ),
-                        shape = RoundedCornerShape(12.dp)
+                    )
+                }
+
+        
+                // Sources/Quality options
+                if (movie.sources.isNotEmpty()) {
+                    Text(
+                        text = "Available Qualities",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(start = 16.dp, top = 16.dp, end = 16.dp)
+                    )
+            
+                    Column(
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.padding(start = 16.dp, end = 16.dp)
                     ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(16.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text(
-                                text = source.quality,
-                                style = MaterialTheme.typography.bodyLarge,
-                                fontWeight = FontWeight.Medium,
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
+                        movie.sources.forEach { source ->
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .tvFocusIndicator().clickable {
+                                        selectedSource = source
+                                        showSourceDialog = true
+                                    },
+                                colors = CardDefaults.cardColors(
+                                    containerColor = MaterialTheme.colorScheme.surfaceVariant
+                                ),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(16.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text(
+                                        text = source.quality,
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        fontWeight = FontWeight.Medium,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
                             
-                            Icon(
-                                imageVector = Icons.Default.PlayArrow,
-                                contentDescription = "Play",
-                                tint = MaterialTheme.colorScheme.primary
-                            )
+                                    Icon(
+                                        imageVector = Icons.Default.PlayArrow,
+                                        contentDescription = "Play",
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                            }
                         }
                     }
                 }
+
             }
         }
-        
-        Spacer(modifier = Modifier.height(16.dp))
+        enrichment?.let { details ->
+            item(key = "tmdb_enrichment") {
+                com.pira.ccloud.ui.details.EnrichmentSection(details, onOpenCatalog = onOpenCatalog,
+                    onFilterGenre = onFilterGenre, onFilterPerson = onFilterPerson)
+            }
+        }
+        item { Spacer(modifier = Modifier.height(16.dp)) }
     }
 }
 
@@ -341,12 +368,12 @@ fun SourceOptionsDialog(
         },
         confirmButton = {
             Column(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.tvFocusIndicator().fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 Button(
                     onClick = { showDownloadOptions = true },
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.tvFocusIndicator().fillMaxWidth(),
                     shape = RoundedCornerShape(16.dp),
                     elevation = androidx.compose.material3.ButtonDefaults.elevatedButtonElevation()
                 ) {
@@ -361,7 +388,7 @@ fun SourceOptionsDialog(
                 
                 Button(
                     onClick = { onPlay(source) },
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.tvFocusIndicator().fillMaxWidth(),
                     shape = RoundedCornerShape(16.dp),
                     colors = androidx.compose.material3.ButtonDefaults.buttonColors(
                         containerColor = MaterialTheme.colorScheme.primaryContainer,
@@ -381,7 +408,7 @@ fun SourceOptionsDialog(
                 // Cancel button moved to the bottom of the dialog
                 TextButton(
                     onClick = onDismiss,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.tvFocusIndicator().fillMaxWidth(),
                     shape = RoundedCornerShape(16.dp)
                 ) {
                     Text("Cancel")

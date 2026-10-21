@@ -53,11 +53,12 @@ class OkHttpTmdbTransport(
     private val credential: () -> String?,
     private val client: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS).readTimeout(15, TimeUnit.SECONDS).build(),
+    private val baseUrl: String = "https://api.themoviedb.org/3",
 ) : TmdbTransport {
     override suspend fun get(path: String, query: Map<String, String>): String = withContext(Dispatchers.IO) {
         val cred = credential() ?: throw TmdbHttpException(401, null)
         val isBearer = cred.startsWith("eyJ")
-        val url = "https://api.themoviedb.org/3$path".toHttpUrl().newBuilder().apply {
+        val url = (baseUrl.trimEnd('/') + path).toHttpUrl().newBuilder().apply {
             query.forEach { (k, v) -> addQueryParameter(k, v) }
             if (!isBearer) addQueryParameter("api_key", cred)
         }.build()
@@ -97,57 +98,178 @@ class TmdbRepository(
 
     private val matches = TtlCache<String, MatchCache>(500, clock)
     private val details = TtlCache<String, Enrichment>(100, clock)
+    private val genreCache = TtlCache<String, List<TmdbGenre>>(4, clock)
+    private val browseCache = TtlCache<String, List<TrendingTitle>>(40, clock)
+    private val browsePageCache = TtlCache<String, TmdbBrowsePage>(80, clock)
     private val inflight = mutableMapOf<String, Deferred<EnrichmentResult>>()
     private val lock = Mutex()
     private val permits = Semaphore(4)
 
-    suspend fun enrich(catalogKey: String, titles: List<String>, year: Int?, type: ContentType, imdbId: String? = null): EnrichmentResult {
+    suspend fun enrich(catalogKey: String, titles: List<String>, year: Int?, type: ContentType, imdbId: String? = null,
+                       countries: List<String> = emptyList()): EnrichmentResult {
         if (!isEnabled()) return EnrichmentResult.Disabled
-        val key = "$catalogKey|v${ContentMatcher.ALGORITHM_VERSION}|${language()}"
+        val key = matchingKey(catalogKey, countries)
         return coroutineScope {
             val job = lock.withLock {
-                inflight[key] ?: async { doEnrich(key, titles, year, type, imdbId) }.also { inflight[key] = it }
+                inflight[key] ?: async { doEnrich(key, titles, year, type, imdbId, countries) }.also { inflight[key] = it }
             }
             try { job.await() } finally { lock.withLock { if (inflight[key] === job) inflight.remove(key) } }
         }
     }
 
-    /** Lets users fix a wrong mapping or refresh after changing token/language. */
-    fun invalidate(catalogKey: String) {
-        val key = "$catalogKey|v${ContentMatcher.ALGORITHM_VERSION}|${language()}"
-        matches.invalidate(key)
+    /** Non-blocking snapshot for repeat details visits, avoiding a loading/reflow frame. */
+    fun cachedEnrichment(catalogKey: String, countries: List<String> = emptyList()): Enrichment? {
+        val key = matchingKey(catalogKey, countries)
+        val hit = matches.get(key) as? MatchCache.Hit ?: return null
+        val kind = if (hit.type == ContentType.MOVIE) "movie" else "tv"
+        return details.get("$kind:${hit.tmdbId}:${language()}")
     }
 
-    fun clearCache() { matches.clear(); details.clear() }
+    /** Lets users fix a wrong mapping or refresh after changing token/language. */
+    fun invalidate(catalogKey: String) {
+        matches.invalidate(matchingKey(catalogKey, emptyList()))
+        matches.invalidate(matchingKey(catalogKey, listOf("South Korea")))
+    }
+
+    fun clearCache() { matches.clear(); details.clear(); genreCache.clear(); browseCache.clear(); browsePageCache.clear() }
+
+    /** Official type-specific TMDB genres. Movie and TV IDs are never interchanged. */
+    suspend fun genres(type: ContentType): List<TmdbGenre> {
+        if (!isEnabled()) return emptyList()
+        val kind = if (type == ContentType.MOVIE) "movie" else "tv"
+        val key = "$kind:${language()}"
+        genreCache.get(key)?.let { return it }
+        return TmdbParser.genres(call("/genre/$kind/list", mapOf("language" to language()))).also {
+            genreCache.put(key, it, 24 * 60 * 60_000L)
+        }
+    }
+
+    /** /search has no with_genres parameter; filter its returned genre_ids locally. */
+    suspend fun browse(
+        type: ContentType,
+        genreId: Int? = null,
+        query: String = "",
+        pages: Int = 2,
+        personId: Int? = null,
+        startPage: Int = 1,
+    ): List<TrendingTitle> {
+        if (!isEnabled()) return emptyList()
+        val firstPage = startPage.coerceAtLeast(1)
+        val pageCount = pages.coerceAtLeast(1)
+        val kind = if (type == ContentType.MOVIE) "movie" else "tv"
+        val text = query.trim()
+        val key = "$kind:$genreId:$personId:$text:${language()}:$firstPage:$pageCount"
+        browseCache.get(key)?.let { return it }
+        if (personId != null) {
+            val credits = TmdbParser.personCredits(
+                call("/person/$personId/combined_credits", mapOf("language" to language())),
+                if (type == ContentType.MOVIE) ContentType.MOVIE else ContentType.SERIES,
+                genreId,
+                text,
+            )
+            return credits.also { browseCache.put(key, it, 30 * 60_000L) }
+        }
+        val path = if (text.isBlank()) "/discover/$kind" else "/search/$kind"
+        val params = buildMap {
+            put("language", language()); put("include_adult", "false")
+            if (text.isNotBlank()) put("query", text)
+            else {
+                put("sort_by", "popularity.desc")
+                genreId?.let { put("with_genres", it.toString()) }
+            }
+        }
+        val titles = coroutineScope {
+            (firstPage until firstPage + pageCount).map { page ->
+                async { TmdbParser.browse(call(path, params + ("page" to page.toString())), type, genreId) }
+            }.flatMap { it.await() }
+        }.distinctBy { "${it.type}:${it.tmdbId}" }
+        browseCache.put(key, titles, 30 * 60_000L)
+        return titles
+    }
+
+    /** Fetch one discover/search page together with TMDB's own pagination boundary. */
+    suspend fun browsePage(
+        type: ContentType,
+        genreId: Int? = null,
+        query: String = "",
+        personId: Int? = null,
+        page: Int = 1,
+    ): TmdbBrowsePage {
+        val requestedPage = page.coerceAtLeast(1)
+        if (!isEnabled()) return TmdbBrowsePage(emptyList(), requestedPage, requestedPage)
+        val kind = if (type == ContentType.MOVIE) "movie" else "tv"
+        val text = query.trim()
+        val key = "$kind:$genreId:$personId:$text:${language()}:$requestedPage"
+        browsePageCache.get(key)?.let { return it }
+        if (personId != null) {
+            val credits = TmdbParser.personCredits(
+                call("/person/$personId/combined_credits", mapOf("language" to language())),
+                if (type == ContentType.MOVIE) ContentType.MOVIE else ContentType.SERIES,
+                genreId,
+                text,
+            )
+            return TmdbBrowsePage(credits, requestedPage, requestedPage).also {
+                browsePageCache.put(key, it, 30 * 60_000L)
+            }
+        }
+        val path = if (text.isBlank()) "/discover/$kind" else "/search/$kind"
+        val params = buildMap {
+            put("language", language()); put("include_adult", "false")
+            if (text.isNotBlank()) put("query", text)
+            else {
+                put("sort_by", "popularity.desc")
+                genreId?.let { put("with_genres", it.toString()) }
+            }
+        }
+        return TmdbParser.browsePage(
+            call(path, params + ("page" to requestedPage.toString())), type, genreId, requestedPage,
+        ).also { browsePageCache.put(key, it, 30 * 60_000L) }
+    }
 
     @Volatile private var trendingCache: Pair<Long, List<TrendingTitle>>? = null
+    private val listCache = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, List<TrendingTitle>>>()
 
-    /**
-     * Home spotlight feed. TMDB has no weekly box-office figures, so "now playing" sorted by
-     * popularity is the box-office proxy; it is followed by this week's trending movies and series.
-     */
+    /** A TMDB list endpoint (e.g. `/trending/movie/week`), merged over [pages]. Cached 30 min. */
+    suspend fun list(path: String, type: ContentType, pages: Int = 2, extra: Map<String, String> = emptyMap()): List<TrendingTitle> {
+        if (!isEnabled()) return emptyList()
+        val key = "$path|$pages|$extra|${language()}"
+        listCache[key]?.let { (t, l) -> if (clock() - t < 30 * 60_000L) return l }
+        val result = coroutineScope {
+            (1..pages).map { p ->
+                async { runCatching { TmdbParser.trending(call(path, extra + mapOf("language" to language(), "page" to "$p")), type) }.getOrDefault(emptyList()) }
+            }.flatMap { it.await() }
+        }.distinctBy { "${it.type}:${it.tmdbId}" }
+        if (result.isNotEmpty()) listCache[key] = clock() to result
+        return result
+    }
+
+    /** Home discovery feed: interleave current releases and weekly movie/TV trends. */
     suspend fun trending(): List<TrendingTitle> {
         if (!isEnabled()) return emptyList()
         trendingCache?.let { (t, list) -> if (clock() - t < 30 * 60_000L && list.isNotEmpty()) return list }
-        val lang = mapOf("language" to language())
         val lists = coroutineScope {
             listOf(
-                async { runCatching { TmdbParser.trending(call("/movie/now_playing", lang + ("page" to "1")), ContentType.MOVIE) }.getOrDefault(emptyList()) },
-                async { runCatching { TmdbParser.trending(call("/trending/movie/week", lang), ContentType.MOVIE) }.getOrDefault(emptyList()) },
-                async { runCatching { TmdbParser.trending(call("/trending/tv/week", lang), ContentType.SERIES) }.getOrDefault(emptyList()) },
-                async { runCatching { TmdbParser.trending(call("/trending/movie/week", lang + ("page" to "2")), ContentType.MOVIE) }.getOrDefault(emptyList()) },
+                async { runCatching { list("/movie/now_playing", ContentType.MOVIE, pages = 2) }.getOrDefault(emptyList()) },
+                async { runCatching { list("/trending/movie/week", ContentType.MOVIE, pages = 2) }.getOrDefault(emptyList()) },
+                async { runCatching { list("/trending/tv/week", ContentType.SERIES, pages = 2) }.getOrDefault(emptyList()) },
             ).map { it.await() }
         }
-        val merged = lists.flatten().distinctBy { "${it.type}:${it.tmdbId}" }
+        val merged = buildList {
+            for (index in 0 until (lists.maxOfOrNull { it.size } ?: 0)) {
+                lists.forEach { source -> source.getOrNull(index)?.let(::add) }
+            }
+        }.distinctBy { "${it.type}:${it.tmdbId}" }
         if (merged.isNotEmpty()) trendingCache = clock() to merged
         return merged
     }
 
-    private suspend fun doEnrich(key: String, titles: List<String>, year: Int?, type: ContentType, imdbId: String?): EnrichmentResult = try {
+
+    private suspend fun doEnrich(key: String, titles: List<String>, year: Int?, type: ContentType, imdbId: String?,
+                                 countries: List<String>): EnrichmentResult = try {
         val match = when (val cached = matches.get(key)) {
             is MatchCache.Hit -> cached
             MatchCache.Miss -> null
-            null -> resolveMatch(titles, year, type, imdbId).also {
+            null -> resolveMatch(titles, year, type, imdbId, countries).also {
                 if (it != null) matches.put(key, it, CacheTtl.MATCH_HIT) else matches.put(key, MatchCache.Miss, CacheTtl.MATCH_MISS)
             }
         }
@@ -157,7 +279,8 @@ class TmdbRepository(
     } catch (e: TmdbHttpException) { EnrichmentResult.Failed(FailureClassifier.fromHttp(e.code))
     } catch (e: Exception) { EnrichmentResult.Failed(FailureClassifier.fromThrowable(e)) }
 
-    private suspend fun resolveMatch(titles: List<String>, year: Int?, type: ContentType, imdbId: String?): MatchCache.Hit? {
+    private suspend fun resolveMatch(titles: List<String>, year: Int?, type: ContentType, imdbId: String?,
+                                     countries: List<String>): MatchCache.Hit? {
         val query = MatchQuery(titles.filter { it.isNotBlank() }, year, type, imdbId)
         if (query.titles.isEmpty() && imdbId == null) return null
         imdbId?.takeIf { it.startsWith("tt") }?.let { id ->
@@ -168,16 +291,57 @@ class TmdbRepository(
         for (st in searchTypes) {
             val ct = if (st == "tv") ContentType.SERIES else ContentType.MOVIE
             for (title in query.titles.take(2)) {
-                val params = buildMap {
-                    put("query", title); put("include_adult", "false"); put("language", language())
-                    if (year != null) put(if (st == "tv") "first_air_date_year" else "year", year.toString())
+                // Use a year-prioritized search first, then retry without the year only
+                // when the provider returns no safe result. This avoids excluding regional
+                // release-year variants while leaving identity decisions to ContentMatcher.
+                for (withYear in listOf(true, false)) {
+                    if (!withYear && year == null) continue
+                    val params = buildMap {
+                        put("query", title); put("include_adult", "false"); put("language", language())
+                        if (withYear && year != null) {
+                            if (st == "tv") put("first_air_date_year", year.toString())
+                            else put("primary_release_year", year.toString())
+                        }
+                    }
+                    val candidates = TmdbParser.searchCandidates(call("/search/$st", params), ct)
+                    (ContentMatcher.match(query, candidates) as? MatchResult.Matched)?.let { return it.toHit() }
+                    if (candidates.isEmpty()) continue
+                    // Don't broaden a non-empty result set after it was rejected as a remake,
+                    // low-confidence candidate, or ambiguous match.
+                    break
                 }
-                val candidates = TmdbParser.searchCandidates(call("/search/$st", params), ct)
-                (ContentMatcher.match(query, candidates) as? MatchResult.Matched)?.let { return it.toHit() }
+            }
+        }
+        val expectedLanguage = expectedOriginalLanguage(countries) ?: return null
+        for (st in searchTypes) {
+            val ct = if (st == "tv") ContentType.SERIES else ContentType.MOVIE
+            val params = buildMap {
+                put("query", titles.firstOrNull().orEmpty()); put("include_adult", "false"); put("language", "en-US")
+            }
+            val candidates = TmdbParser.searchCandidates(call("/search/$st", params), ct)
+            val exact = candidates.filter { candidate ->
+                val title = candidate.title.lowercase().replace(Regex("[^\\p{L}\\p{N}]+"), " ").trim()
+                title == titles.firstOrNull()?.lowercase()?.replace(Regex("[^\\p{L}\\p{N}]+"), " ")?.trim() &&
+                    candidate.originalLanguage == expectedLanguage
+            }.distinctBy { it.providerId }
+            if (exact.size == 1) {
+                val candidate = exact.single()
+                return MatchCache.Hit(candidate.providerId, candidate.type, 0.95)
             }
         }
         return null
     }
+
+    private fun expectedOriginalLanguage(countries: List<String>): String? {
+        val normalized = countries.joinToString(" ").lowercase()
+        return when {
+            "korea" in normalized || "한국" in normalized || "کور" in normalized -> "ko"
+            else -> null
+        }
+    }
+
+    private fun matchingKey(catalogKey: String, countries: List<String>) =
+        "$catalogKey|v${ContentMatcher.ALGORITHM_VERSION}|${language()}|${expectedOriginalLanguage(countries).orEmpty()}"
 
     private fun MatchResult.Matched.toHit() = MatchCache.Hit(candidate.providerId, candidate.type, confidence)
 

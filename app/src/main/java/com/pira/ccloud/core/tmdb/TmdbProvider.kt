@@ -16,6 +16,11 @@ object TmdbProvider {
 
     fun isEnabled(context: Context): Boolean = credential(context) != null
 
+    /** Drop in-memory responses after a user changes or removes their credential. */
+    fun invalidateRepository() {
+        synchronized(this) { repo = null }
+    }
+
     fun repository(context: Context): TmdbRepository = repo ?: synchronized(this) {
         repo ?: run {
             val app = context.applicationContext

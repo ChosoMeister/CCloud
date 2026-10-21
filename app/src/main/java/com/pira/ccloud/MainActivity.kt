@@ -16,11 +16,14 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.background
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -28,6 +31,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.foundation.focusGroup
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.ui.Modifier
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -94,7 +99,7 @@ fun MainApp() {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 fun MainScreen(
     onThemeSettingsChanged: (ThemeSettings) -> Unit = {},
@@ -121,9 +126,34 @@ fun MainScreen(
         else -> AppScreens.screens.find { it.route == currentRoute } ?: AppScreens.Movies
     }
     
+    var lastExitBack by remember { androidx.compose.runtime.mutableLongStateOf(0L) }
+    BackHandler(enabled = isTv && currentRoute != null && currentRoute != AppScreens.Splash.route) {
+        val detail = currentRoute?.startsWith("single_") == true || currentRoute?.startsWith("country/") == true || currentRoute == "about"
+        when {
+            detail && navController.popBackStack() -> Unit
+            currentRoute != AppScreens.Home.route -> navController.navigate(AppScreens.Home.route) {
+                popUpTo(AppScreens.Home.route) { inclusive = false }
+                launchSingleTop = true
+                restoreState = true
+            }
+            else -> {
+                val now = android.os.SystemClock.uptimeMillis()
+                if (now - lastExitBack < 2000L) (context as? android.app.Activity)?.finish()
+                else {
+                    lastExitBack = now
+                    android.widget.Toast.makeText(context, "Press Back again to exit", android.widget.Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+
     // System UI controller for edge-to-edge support
     val systemUiController = rememberSystemUiController()
-    val useDarkIcons = themeSettings.themeMode != com.pira.ccloud.ui.theme.ThemeMode.DARK
+    val useDarkIcons = when (themeSettings.themeMode) {
+        com.pira.ccloud.ui.theme.ThemeMode.LIGHT -> true
+        com.pira.ccloud.ui.theme.ThemeMode.DARK -> false
+        com.pira.ccloud.ui.theme.ThemeMode.SYSTEM -> !isSystemInDarkTheme()
+    }
     
     LaunchedEffect(themeSettings) {
         systemUiController.setStatusBarColor(
@@ -139,48 +169,36 @@ fun MainScreen(
     Scaffold(
         modifier = Modifier.fillMaxSize(),
     ) { innerPadding ->
-        if (isTv) {
-            // TV layout with sidebar navigation
-            Row(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(innerPadding)
-            ) {
-                // Sidebar navigation for TV
-                SidebarNavigation(navController)
-                
-                // Main content area with padding to separate from sidebar
+        val showNav = (isTv || currentScreen.showBottomBar) && currentRoute != AppScreens.Splash.route
+        val isHome = currentRoute == AppScreens.Home.route
+        val cfg = androidx.compose.ui.platform.LocalConfiguration.current
+        val landscape = cfg.screenWidthDp > cfg.screenHeightDp
+        if (isTv || landscape) {
+            // Side rail (30nama / Filimo pattern): sits beside the content, never over artwork.
+            Row(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)
+                .padding(horizontal = if (isTv) (cfg.screenWidthDp * 0.025f).dp else 0.dp,
+                    vertical = if (isTv) (cfg.screenHeightDp * 0.03f).dp else 0.dp)) {
+                if (showNav) SidebarNavigation(navController, compact = true)
                 Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .padding(start = 16.dp, end = 24.dp, top = 24.dp, bottom = 24.dp)
+                    modifier = Modifier.weight(1f).fillMaxSize().focusGroup()
+                        .then(if (isHome || !showNav) Modifier else Modifier.padding(innerPadding))
                 ) {
-                    // Pass theme settings and font settings callback to navigation
                     AppNavigation(navController, onThemeSettingsChanged, onFontSettingsChanged)
                 }
             }
         } else {
-            // Mobile/tablet: content with a floating pill nav overlaid at the bottom.
-            val showNav = currentScreen.showBottomBar && currentRoute != AppScreens.Splash.route
-            val isHome = currentRoute == AppScreens.Home.route
-            val cfg = androidx.compose.ui.platform.LocalConfiguration.current
-            val navOnTop = cfg.screenWidthDp > cfg.screenHeightDp
+            // Portrait phone: content with a floating pill nav overlaid at the bottom.
             Box(modifier = Modifier.fillMaxSize()) {
                 Box(
                     modifier = if (isHome) Modifier.fillMaxSize()
-                    else Modifier.fillMaxSize().padding(innerPadding).padding(
-                        top = if (showNav && navOnTop) 76.dp else 0.dp,
-                        bottom = if (showNav && !navOnTop) 84.dp else 0.dp,
-                    )
+                    else Modifier.fillMaxSize().padding(innerPadding).padding(bottom = if (showNav) 84.dp else 0.dp)
                 ) {
                     AppNavigation(navController, onThemeSettingsChanged, onFontSettingsChanged)
                 }
                 if (showNav) {
                     BottomNavigationBar(
                         navController,
-                        if (navOnTop) Modifier.align(androidx.compose.ui.Alignment.TopCenter)
-                            .statusBarsPadding().widthIn(max = 760.dp)
-                        else Modifier.align(androidx.compose.ui.Alignment.BottomCenter).navigationBarsPadding(),
+                        Modifier.align(androidx.compose.ui.Alignment.BottomCenter).navigationBarsPadding(),
                     )
                 }
             }

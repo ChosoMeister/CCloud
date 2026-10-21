@@ -5,8 +5,6 @@ import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.dynamicDarkColorScheme
-import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.SideEffect
@@ -168,55 +166,32 @@ fun CCloudTheme(
     // Load font family based on font settings
     val fontFamily = FontManager.loadFontFamily(context, fontSettings.fontType)
     
-    val colorScheme = when {
-        themeSettings.primaryColor != defaultPrimaryColor -> {
-            // Custom colors - using the same color for primary and secondary since we removed secondary color setting
-            if (darkTheme) {
-                darkColorScheme(
-                    primary = themeSettings.primaryColor,
-                    secondary = themeSettings.primaryColor,
-                    tertiary = Pink80,
-                    background = Color(0xFF121212),
-                    surface = Color(0xFF1E1E1E),
-                    surfaceVariant = Color(0xFF2D2D2D),
-                    onPrimary = Color.White,
-                    onSecondary = Color.White,
-                    onTertiary = Color.White,
-                    onBackground = Color.White,
-                    onSurface = Color.White,
-                    onSurfaceVariant = Color(0xFFE0E0E0)
-                )
-            } else {
-                lightColorScheme(
-                    primary = themeSettings.primaryColor,
-                    secondary = themeSettings.primaryColor,
-                    tertiary = Pink40,
-                    background = Color(0xFFFFFBFE),
-                    surface = Color(0xFFFFFBFE),
-                    surfaceVariant = Color(0xFFE7E0EC),
-                    onPrimary = Color.White,
-                    onSecondary = Color.White,
-                    onTertiary = Color.White,
-                    onBackground = Color(0xFF1C1B1F),
-                    onSurface = Color(0xFF1C1B1F),
-                    onSurfaceVariant = Color(0xFF49454F)
-                )
-            }
-        }
-        Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
-            val context = LocalContext.current
-            if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
-        }
-        darkTheme -> DarkColorScheme
-        else -> LightColorScheme
-    }
+    // Keep app colors stable across devices and wallpaper choices. Most importantly,
+    // both palettes are semantically complete so screens share readable text/surfaces.
+    val accent = if (themeSettings.primaryColor != defaultPrimaryColor) themeSettings.primaryColor
+        else if (darkTheme) Purple80 else Purple40
+    val colorScheme = if (darkTheme) darkColorScheme(
+        primary = accent, secondary = accent, tertiary = Pink80,
+        background = Color(0xFF0B0B0D), surface = Color(0xFF141417),
+        surfaceVariant = Color(0xFF24242A), surfaceContainer = Color(0xFF1C1C21),
+        onPrimary = Color.White, onSecondary = Color.White, onTertiary = Color.White,
+        onBackground = Color(0xFFF4F4F5), onSurface = Color(0xFFF4F4F5),
+        onSurfaceVariant = Color(0xFFB4B4BB), outline = Color(0xFF777780),
+    ) else lightColorScheme(
+        primary = accent, secondary = accent, tertiary = Pink40,
+        background = Color(0xFFF5F5F8), surface = Color(0xFFFFFFFF),
+        surfaceVariant = Color(0xFFE9E8EF), surfaceContainer = Color(0xFFF0EFF5),
+        onPrimary = Color.White, onSecondary = Color.White, onTertiary = Color.White,
+        onBackground = Color(0xFF1B1A20), onSurface = Color(0xFF1B1A20),
+        onSurfaceVariant = Color(0xFF494650), outline = Color(0xFF77727D),
+    )
     
     val view = LocalView.current
     if (!view.isInEditMode) {
         SideEffect {
             val window = (view.context as Activity).window
             window.statusBarColor = colorScheme.primary.toArgb()
-            WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = darkTheme
+            WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = !darkTheme
         }
     }
 

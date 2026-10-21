@@ -1,3 +1,5 @@
+@file:OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
+
 package com.pira.ccloud.ui.home
 
 import androidx.compose.foundation.background
@@ -30,20 +32,36 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.ui.input.pointer.PointerType
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
+import kotlin.math.abs
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.draw.blur
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
@@ -51,26 +69,33 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.pager.HorizontalPager
-import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.focusGroup
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.key.key
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
-import kotlinx.coroutines.delay
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.navigation.NavController
 import coil.compose.AsyncImage
 import com.pira.ccloud.R
-import com.pira.ccloud.VideoPlayerActivity
 import com.pira.ccloud.core.designsystem.CinematicColors
 import com.pira.ccloud.core.designsystem.CinematicScrims
 import com.pira.ccloud.core.designsystem.CinematicShapes
@@ -95,11 +120,14 @@ import com.pira.ccloud.utils.StorageUtils
 fun HomeScreen(viewModel: HomeViewModel, navController: NavController) {
     val state by viewModel.state.collectAsState()
     val spotlight by viewModel.spotlight.collectAsState()
+    val tmdbRails by viewModel.tmdbRails.collectAsState()
     val context = LocalContext.current
     val isTv = remember { DeviceUtils.isTv(context) }
     val isTablet = remember { DeviceUtils.isTablet(context) }
+    val density = LocalDensity.current
+    val homeDensity = Density(density.density * if (isTv) 0.92f else 1f, density.fontScale)
     val gutter = when { isTv -> CinematicSpacing.gutterTv; isTablet -> CinematicSpacing.gutterTablet; else -> CinematicSpacing.gutterPhone }
-    val posterWidth = when { isTv -> 150.dp; isTablet -> 140.dp; else -> 116.dp }
+    val posterWidth = when { isTv -> 108.dp; isTablet -> 140.dp; else -> 116.dp }
 
     // Progress/favorites may change in Details/Player; refresh local rails on return.
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -113,38 +141,31 @@ fun HomeScreen(viewModel: HomeViewModel, navController: NavController) {
         // Legacy details screens read the title from cached files; write it first (same as MoviesScreen).
         when (t.ref.type) {
             ContentType.MOVIE -> viewModel.movie(t.ref.catalogId)?.let {
-                StorageUtils.saveMovieToFile(context, it); navController.navigate("single_movie/${it.id}")
+                com.pira.ccloud.core.catalog.CatalogNavigation.openMovie(context, navController, it)
             }
             else -> viewModel.series(t.ref.catalogId)?.let {
-                StorageUtils.saveSeriesToFile(context, it); navController.navigate("single_series/${it.id}")
+                com.pira.ccloud.core.catalog.CatalogNavigation.openSeries(context, navController, it)
             }
         }
     }
-    val play: (CatalogTitle) -> Unit = { t ->
-        val movie = if (t.ref.type == ContentType.MOVIE) viewModel.movie(t.ref.catalogId) else null
-        val source = movie?.sources?.firstOrNull { it.url.isNotBlank() }
-        // Only real catalog sources reach the player; anything else opens Details.
-        if (movie != null && source != null && t.availability.isPlayable) {
-            StorageUtils.saveMovieToFile(context, movie)
-            VideoPlayerActivity.startWithMovieInfo(context, source.url, movie.id)
-        } else openDetails(t)
-    }
 
-    Box(Modifier.fillMaxSize().background(CinematicColors.Stage)) {
-        when (val s = state) {
-            LoadState.Loading -> HomeSkeleton(gutter, posterWidth)
-            LoadState.Empty -> EmptyState(Modifier.align(Alignment.Center))
-            is LoadState.Failed -> ErrorState(s.failure, viewModel::refresh, Modifier.align(Alignment.Center))
-            is LoadState.Ready -> HomeBody(s.data, spotlight, false, gutter, posterWidth, isTv, play, openDetails)
-            is LoadState.Partial -> HomeBody(s.data, spotlight, true, gutter, posterWidth, isTv, play, openDetails)
+    CompositionLocalProvider(LocalDensity provides homeDensity) {
+        Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+            when (val s = state) {
+                LoadState.Loading -> HomeSkeleton(gutter, posterWidth)
+                LoadState.Empty -> EmptyState(Modifier.align(Alignment.Center))
+                is LoadState.Failed -> ErrorState(s.failure, viewModel::refresh, Modifier.align(Alignment.Center))
+                is LoadState.Ready -> HomeBody(s.data, spotlight, tmdbRails, false, gutter, posterWidth, isTv, openDetails)
+                is LoadState.Partial -> HomeBody(s.data, spotlight, tmdbRails, true, gutter, posterWidth, isTv, openDetails)
+            }
         }
     }
 }
 
 @Composable
 private fun HomeBody(
-    content: HomeContent, spotlight: List<SpotlightItem>, partial: Boolean, gutter: Dp, posterWidth: Dp, isTv: Boolean,
-    onPlay: (CatalogTitle) -> Unit, onDetails: (CatalogTitle) -> Unit,
+    content: HomeContent, spotlight: List<SpotlightItem>, tmdbRails: List<HomeRail>, partial: Boolean, gutter: Dp, posterWidth: Dp, isTv: Boolean,
+    onDetails: (CatalogTitle) -> Unit,
 ) {
     val heroes: List<Pair<CatalogTitle, com.pira.ccloud.core.tmdb.TrendingTitle?>> = remember(content, spotlight) {
         if (spotlight.isNotEmpty()) spotlight.map { it.title to it.tmdb }
@@ -152,53 +173,122 @@ private fun HomeBody(
             .flatMap { it.items }.filter { it.backdropUrl != null && it.availability.isPlayable })
             .distinctBy { it.stableKey }.take(8).map { it to null }
     }
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 112.dp)) {
+    val rails = remember(content, tmdbRails) {
+        if (tmdbRails.isEmpty()) content.rails
+        else {
+            val byKind = content.rails.associateBy { it.kind }
+            listOfNotNull(byKind[RailKind.CONTINUE_WATCHING]) + tmdbRails +
+                listOfNotNull(byKind[RailKind.NEW_MOVIES], byKind[RailKind.NEW_SERIES], byKind[RailKind.MY_LIST])
+        }
+    }
+    val heroFocusRequester = remember { FocusRequester() }
+    val firstRailFocusRequester = remember { FocusRequester() }
+    val firstRailKey = rails.firstOrNull { it.items.isNotEmpty() || it.continueItems.isNotEmpty() }?.key
+    var lastFocusedTitle by rememberSaveable { androidx.compose.runtime.mutableStateOf<String?>(null) }
+    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+    LazyColumn(Modifier.fillMaxSize(), state = listState, contentPadding = PaddingValues(bottom = if (isTv) 32.dp else 112.dp)) {
         // Always emit the hero slot first so late-arriving heroes never leave the list scrolled past it.
-        item(key = "hero") { if (heroes.isNotEmpty()) HeroCarousel(heroes, gutter, isTv, onPlay, onDetails) }
+        item(key = "hero") { if (heroes.isNotEmpty()) HeroCarousel(heroes, gutter, isTv, heroFocusRequester, firstRailFocusRequester.takeIf { firstRailKey != null }, lastFocusedTitle == null, { lastFocusedTitle = null }, onDetails) }
         if (partial) item(key = "partial") {
-            Text(stringResource(R.string.cine_partial_notice), color = CinematicColors.TextTertiary, fontSize = 12.sp,
+            Text(stringResource(R.string.cine_partial_notice), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp,
                 modifier = Modifier.padding(horizontal = gutter, vertical = CinematicSpacing.sm))
         }
-        items(content.rails, key = { it.kind.name }) { rail ->
-            ContentRail(rail, gutter, posterWidth, onPlay, onDetails)
+        items(rails, key = { it.key }) { rail ->
+            ContentRail(rail, gutter, posterWidth, lastFocusedTitle, { lastFocusedTitle = it },
+                firstRailFocusRequester.takeIf { rail.key == firstRailKey },
+                heroFocusRequester.takeIf { rail.key == firstRailKey && heroes.isNotEmpty() }, onDetails)
         }
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun HeroCarousel(
     heroes: List<Pair<CatalogTitle, com.pira.ccloud.core.tmdb.TrendingTitle?>>, gutter: Dp, isTv: Boolean,
-    onPlay: (CatalogTitle) -> Unit, onDetails: (CatalogTitle) -> Unit,
+    heroFocusRequester: FocusRequester, firstRailFocusRequester: FocusRequester?,
+    restoreFocus: Boolean, onFocused: () -> Unit,
+    onDetails: (CatalogTitle) -> Unit,
 ) {
-    val pager = rememberPagerState { heroes.size }
-    // Gentle auto-advance; pauses while the user is dragging.
-    LaunchedEffect(pager, heroes.size) {
-        if (heroes.size < 2) return@LaunchedEffect
-        while (true) {
-            delay(7_000)
-            if (!pager.isScrollInProgress) pager.animateScrollToPage((pager.currentPage + 1) % heroes.size)
-        }
-    }
+    var selectedPage by rememberSaveable { androidx.compose.runtime.mutableIntStateOf(0) }
     val config = LocalConfiguration.current
     val landscape = config.screenWidthDp > config.screenHeightDp
-    val height = if (landscape) config.screenHeightDp.dp else (config.screenHeightDp * 0.72f).dp
-    Box(Modifier.fillMaxWidth().height(height)) {
-        HorizontalPager(pager, Modifier.fillMaxSize(), key = { heroes[it].first.stableKey }) { page ->
-            val (t, spot) = heroes[page]
-            HeroPage(t, spot, if (spot != null) page + 1 else null, gutter, isTv, landscape, onPlay, onDetails)
+    // Give artwork more room, while keeping the first content rail reachable on a TV viewport.
+    val height = if (isTv) (config.screenHeightDp * 0.80f).dp.coerceIn(380.dp, 600.dp) else if (landscape) (config.screenHeightDp * 0.92f).dp else (config.screenHeightDp * 0.78f).dp
+    val interaction = remember { MutableInteractionSource() }
+    val focused by interaction.collectIsFocusedAsState()
+    val pagerState = rememberPagerState(pageCount = { heroes.size })
+    val pagerScope = rememberCoroutineScope()
+    val page = if (isTv) selectedPage.coerceIn(0, heroes.lastIndex) else pagerState.currentPage.coerceIn(0, heroes.lastIndex)
+    val (title, spotlight) = heroes[page]
+    val detailsLabel = stringResource(R.string.cine_action_details)
+    val inputMode = androidx.compose.ui.platform.LocalInputModeManager.current
+    // `currentPage` changes as soon as a pager animation starts. Keying this timer to it
+    // cancels animateScrollToPage mid-flight, leaving the mobile banner between slides.
+    // `settledPage` only changes after the swipe/animation has fully landed.
+    val settledPage = pagerState.settledPage.coerceIn(0, heroes.lastIndex)
+    LaunchedEffect(settledPage, heroes.size, isTv, focused) {
+        if (heroes.size > 1 && (!isTv || focused)) {
+            delay(8_000L)
+            val nextPage = if (page >= heroes.lastIndex) 0 else page + 1
+            if (isTv) selectedPage = nextPage
+            else pagerState.animateScrollToPage(nextPage)
         }
-        if (heroes.size > 1) {
-            Row(
-                Modifier.align(Alignment.BottomCenter).padding(bottom = 10.dp).clip(CircleShape)
-                    .background(Color.Black.copy(alpha = 0.35f)).padding(horizontal = 10.dp, vertical = 6.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                repeat(heroes.size) { i ->
-                    val selected = i == pager.currentPage
-                    Box(Modifier.height(6.dp).width(if (selected) 18.dp else 6.dp).clip(CircleShape)
-                        .background(if (selected) Color.White else Color.White.copy(alpha = 0.45f)))
+    }
+    LaunchedEffect(isTv) {
+        if (isTv && restoreFocus) {
+            inputMode.requestInputMode(androidx.compose.ui.input.InputMode.Keyboard)
+            heroFocusRequester.requestFocus()
+        }
+    }
+    Box(Modifier.fillMaxWidth().height(height).then(
+        if (isTv) Modifier
+            .focusRequester(heroFocusRequester)
+            .focusProperties { firstRailFocusRequester?.let { down = it } }
+            .onFocusChanged { if (it.isFocused) onFocused() }
+            .onKeyEvent { event ->
+                if (event.type != KeyEventType.KeyDown) false else if (event.nativeKeyEvent.repeatCount > 0 &&
+                    (event.key == Key.DirectionLeft || event.key == Key.DirectionRight)) true else when (event.key) {
+                    Key.DirectionLeft -> if (page > 0) { selectedPage = page - 1; true } else false
+                    Key.DirectionRight -> { selectedPage = (page + 1).coerceAtMost(heroes.lastIndex); true }
+                    Key.DirectionDown -> firstRailFocusRequester?.let { it.requestFocus(); true } ?: false
+                    else -> false
                 }
+            }
+            .clickable(interactionSource = interaction, indication = null, onClickLabel = detailsLabel) { onDetails(title) }
+            .then(if (focused) Modifier.border(4.dp, Color.White, RoundedCornerShape(8.dp)) else Modifier)
+            .semantics { contentDescription = "${spotlight?.title ?: title.title}, $detailsLabel" }
+        else Modifier
+    )) {
+        if (isTv) {
+            HeroPage(title, spotlight, gutter, true, landscape, focused, onDetails)
+        } else {
+            HorizontalPager(state = pagerState, modifier = Modifier.fillMaxSize()
+                .pointerInput(pagerState) {
+                    // Android's pager handles touch; also accept a primary-button mouse drag.
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        if (down.type != PointerType.Mouse) return@awaitEachGesture
+                        var dx = 0f
+                        var dy = 0f
+                        var horizontal = false
+                        var pressed: Boolean
+                        do {
+                            val event = awaitPointerEvent(PointerEventPass.Initial)
+                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                            dx += change.position.x - change.previousPosition.x
+                            dy += change.position.y - change.previousPosition.y
+                            if (abs(dx) > viewConfiguration.touchSlop && abs(dx) > abs(dy)) horizontal = true
+                            if (horizontal) change.consume()
+                            pressed = change.pressed
+                        } while (pressed)
+                        if (horizontal && abs(dx) > size.width * 0.12f) {
+                            val target = (pagerState.currentPage + if (dx < 0) 1 else -1).coerceIn(0, heroes.lastIndex)
+                            pagerScope.launch { pagerState.animateScrollToPage(target) }
+                        }
+                    }
+                },
+                key = { heroes[it].first.stableKey }) { index ->
+                val (item, art) = heroes[index]
+                HeroPage(item, art, gutter, false, landscape, false, onDetails)
             }
         }
     }
@@ -206,8 +296,9 @@ private fun HeroCarousel(
 
 @Composable
 private fun HeroPage(
-    hero: CatalogTitle, spot: com.pira.ccloud.core.tmdb.TrendingTitle?, rank: Int?, gutter: Dp, isTv: Boolean, landscape: Boolean,
-    onPlay: (CatalogTitle) -> Unit, onDetails: (CatalogTitle) -> Unit,
+    hero: CatalogTitle, spot: com.pira.ccloud.core.tmdb.TrendingTitle?, gutter: Dp, isTv: Boolean, landscape: Boolean,
+    focused: Boolean,
+    onDetails: (CatalogTitle) -> Unit,
 ) {
     val centered = !landscape
     Box(Modifier.fillMaxSize()) {
@@ -215,8 +306,9 @@ private fun HeroPage(
         val e = if (spot == null) com.pira.ccloud.ui.details.rememberEnrichment(
             if (hero.ref.type == ContentType.MOVIE) "movie:${hero.ref.catalogId}" else "series:${hero.ref.catalogId}",
             listOf(hero.title), hero.year, hero.ref.type) else null
-        val tmdbArt = com.pira.ccloud.ui.details.sharpBackdrop(
+        val raw = com.pira.ccloud.ui.details.sharpBackdrop(
             if (landscape) spot?.backdropUrl ?: e?.backdropUrl else spot?.posterUrl ?: e?.posterUrl)
+        val tmdbArt = if (isTv) raw?.replace("/t/p/original/", "/t/p/w1280/") else raw
         if (tmdbArt != null) {
             AsyncImage(model = tmdbArt, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
         } else {
@@ -233,22 +325,17 @@ private fun HeroPage(
         }
         Box(Modifier.fillMaxSize().background(Brush.verticalGradient(
             0f to Color.Black.copy(alpha = 0.25f), 0.15f to Color.Transparent, 0.65f to Color.Transparent,
-            1f to CinematicColors.Stage)))
+            1f to MaterialTheme.colorScheme.background)))
         if (landscape) Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(
             0f to Color.Black.copy(alpha = 0.6f), 0.45f to Color.Transparent)))
         Column(
             Modifier.align(if (centered) Alignment.BottomCenter else Alignment.BottomStart)
-                .padding(start = gutter, end = gutter, bottom = 36.dp)
+                .padding(start = gutter, end = gutter, bottom = if (isTv) 36.dp else 64.dp)
                 .fillMaxWidth(if (landscape) 0.55f else 1f),
             horizontalAlignment = if (centered) Alignment.CenterHorizontally else Alignment.Start,
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            rank?.let {
-                Text("TOP 10  ·  #$it", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold,
-                    modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(Color(0xFFE50914))
-                        .padding(horizontal = 10.dp, vertical = 4.dp))
-            }
-            Text(spot?.title ?: hero.title, color = Color.White, fontSize = if (isTv) 40.sp else 30.sp, lineHeight = if (isTv) 44.sp else 34.sp,
+            Text(spot?.title ?: hero.title, color = Color.White, fontSize = if (isTv) 26.sp else 30.sp, lineHeight = if (isTv) 32.sp else 34.sp,
                 fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis,
                 textAlign = if (centered) TextAlign.Center else TextAlign.Start,
                 modifier = Modifier.semantics { heading() })
@@ -267,75 +354,18 @@ private fun HeroPage(
                     overflow = TextOverflow.Ellipsis, textAlign = if (centered) TextAlign.Center else TextAlign.Start)
             }
             Spacer(Modifier.height(4.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                if (hero.availability.isPlayable) {
-                    Button(onClick = { onPlay(hero) }, shape = CircleShape,
-                        modifier = Modifier.height(56.dp).width(if (isTv) 220.dp else 188.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFF4F4F6), contentColor = Color(0xFF111114))) {
-                        Icon(Icons.Default.PlayArrow, contentDescription = null)
-                        Spacer(Modifier.width(8.dp))
-                        Text(stringResource(R.string.cine_action_play), fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
-                    }
-                }
-                val detailsCd = stringResource(R.string.cine_action_details)
-                Box(
-                    Modifier.size(56.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.14f))
-                        .border(1.dp, Color.White.copy(alpha = 0.35f), CircleShape)
-                        .clickable { onDetails(hero) }.semantics { contentDescription = detailsCd },
-                    contentAlignment = Alignment.Center,
-                ) { Icon(Icons.Default.Info, contentDescription = null, tint = Color.White) }
-            }
-        }
-    }
-}
-
-@Composable
-private fun CinematicHero(
-    hero: CatalogTitle, gutter: Dp, isTv: Boolean,
-    onPlay: (CatalogTitle) -> Unit, onDetails: (CatalogTitle) -> Unit,
-) {
-    // Hero never takes the whole viewport: 16:9 of width, capped.
-    BoxWithConstraints(Modifier.fillMaxWidth()) {
-        val height = (maxWidth * 9 / 16).coerceAtMost(if (isTv) 420.dp else 360.dp).coerceAtLeast(220.dp)
-        Box(Modifier.fillMaxWidth().height(height)) {
-            AsyncImage(model = hero.backdropUrl, contentDescription = null, contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize())
-            Box(Modifier.fillMaxSize().background(CinematicScrims.bottom))
-            Box(Modifier.fillMaxSize().background(CinematicScrims.start))
-            Column(
-                Modifier.align(Alignment.BottomStart).padding(horizontal = gutter, vertical = CinematicSpacing.lg)
-                    .fillMaxWidth(if (isTv) 0.5f else 1f),
-                verticalArrangement = Arrangement.spacedBy(CinematicSpacing.sm),
+            val detailsLabel = stringResource(R.string.cine_action_details)
+            Row(
+                Modifier.clip(RoundedCornerShape(8.dp))
+                    .background(if (focused) Color.White else Color.White.copy(alpha = 0.15f))
+                    .then(if (!isTv) Modifier.clickable { onDetails(hero) } else Modifier)
+                    .padding(horizontal = 18.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Text(hero.title, color = CinematicColors.TextPrimary, fontSize = if (isTv) 34.sp else 26.sp,
-                    fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.semantics { heading() })
-                Row(horizontalArrangement = Arrangement.spacedBy(CinematicSpacing.sm), verticalAlignment = Alignment.CenterVertically) {
-                    hero.year?.let { Text(it.toString(), color = CinematicColors.TextSecondary, fontSize = 13.sp) }
-                    hero.genres.take(2).takeIf { it.isNotEmpty() }?.let {
-                        Text(it.joinToString(" · "), color = CinematicColors.TextSecondary, fontSize = 13.sp, maxLines = 1)
-                    }
-                    hero.ratings.firstOrNull()?.let { RatingPill(it) }
-                }
-                if (hero.synopsis.isNotBlank()) {
-                    Text(hero.synopsis, color = CinematicColors.TextSecondary, fontSize = 13.sp, maxLines = 2,
-                        overflow = TextOverflow.Ellipsis)
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(CinematicSpacing.md)) {
-                    if (hero.availability.isPlayable) {
-                        Button(onClick = { onPlay(hero) }, shape = CinematicShapes.button,
-                            colors = ButtonDefaults.buttonColors(containerColor = CinematicColors.Accent, contentColor = CinematicColors.OnAccent)) {
-                            Icon(Icons.Default.PlayArrow, contentDescription = null)
-                            Spacer(Modifier.width(6.dp))
-                            Text(stringResource(R.string.cine_action_play))
-                        }
-                    }
-                    OutlinedButton(onClick = { onDetails(hero) }, shape = CinematicShapes.button) {
-                        Icon(Icons.Default.Info, contentDescription = null, tint = CinematicColors.TextPrimary)
-                        Spacer(Modifier.width(6.dp))
-                        Text(stringResource(R.string.cine_action_details), color = CinematicColors.TextPrimary)
-                    }
-                }
+                Icon(Icons.Default.Info, null, tint = if (focused) Color.Black else Color.White)
+                Text(detailsLabel, color = if (focused) Color.Black else Color.White,
+                    fontSize = 14.sp, fontWeight = FontWeight.Bold)
             }
         }
     }
@@ -348,59 +378,97 @@ private fun RailKind.titleRes(): Int = when (this) {
     RailKind.NEW_SERIES -> R.string.cine_rail_new_series
     RailKind.TOP_IMDB_SERIES -> R.string.cine_rail_top_series
     RailKind.MY_LIST -> R.string.cine_rail_my_list
+    RailKind.TMDB -> R.string.cine_rail_new_movies
 }
 
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 private fun ContentRail(
     rail: HomeRail, gutter: Dp, posterWidth: Dp,
-    onPlay: (CatalogTitle) -> Unit, onDetails: (CatalogTitle) -> Unit,
+    lastFocusedTitle: String?, onFocused: (String) -> Unit,
+    entryRequester: FocusRequester?, upRequester: FocusRequester?,
+    onDetails: (CatalogTitle) -> Unit,
 ) {
+    var entryKey by rememberSaveable(rail.key) { androidx.compose.runtime.mutableStateOf<String?>(null) }
+    val keys = if (rail.kind == RailKind.CONTINUE_WATCHING) rail.continueItems.map { "${rail.key}:${it.progress.key}" }
+        else rail.items.map { "${rail.key}:${it.stableKey}" }
+    val targetKey = entryKey?.takeIf { it in keys } ?: keys.firstOrNull()
+    val localEntryRequester = remember { FocusRequester() }
+    val rowEntryRequester = entryRequester ?: localEntryRequester
+    val rememberFocus: (String) -> Unit = { key -> entryKey = key; onFocused(key) }
     Column(Modifier.padding(top = CinematicSpacing.lg)) {
-        Text(stringResource(rail.kind.titleRes()), color = CinematicColors.TextPrimary, fontSize = 17.sp,
+        Text(rail.customTitle ?: stringResource(rail.kind.titleRes()), color = MaterialTheme.colorScheme.onSurface, fontSize = 17.sp,
             fontWeight = FontWeight.SemiBold,
             modifier = Modifier.padding(horizontal = gutter, vertical = CinematicSpacing.sm).semantics { heading() })
-        LazyRow(contentPadding = PaddingValues(horizontal = gutter), horizontalArrangement = Arrangement.spacedBy(CinematicSpacing.md)) {
+        LazyRow(modifier = Modifier.focusProperties { enter = { rowEntryRequester } }.focusGroup(), contentPadding = PaddingValues(horizontal = gutter, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(CinematicSpacing.md)) {
             if (rail.kind == RailKind.CONTINUE_WATCHING) {
-                items(rail.continueItems, key = { it.progress.key }) { ProgressCard(it, posterWidth * 1.6f) { onPlayOrDetails(it, onPlay, onDetails) } }
+                items(rail.continueItems, key = { it.progress.key }) { item ->
+                    val key = "${rail.key}:${item.progress.key}"
+                    val focus = rememberTitleFocus(key, lastFocusedTitle, rememberFocus)
+                        .then(if (key == targetKey) Modifier.focusRequester(rowEntryRequester) else Modifier)
+                        .focusProperties { upRequester?.let { up = it } }
+                    ProgressCard(item, posterWidth * 1.6f, focus) { onDetails(item.title) }
+                }
             } else {
-                items(rail.items, key = { it.stableKey }) { PosterCard(it, onClick = { onDetails(it) }, width = posterWidth) }
+                items(rail.items, key = { it.stableKey }) { item ->
+                    val key = "${rail.key}:${item.stableKey}"
+                    val focus = rememberTitleFocus(key, lastFocusedTitle, rememberFocus)
+                        .then(if (key == targetKey) Modifier.focusRequester(rowEntryRequester) else Modifier)
+                        .focusProperties { upRequester?.let { up = it } }
+                    PosterCard(item, onClick = { onDetails(item) }, width = posterWidth, focusModifier = focus)
+                }
             }
         }
     }
 }
 
-private fun onPlayOrDetails(item: ContinueItem, onPlay: (CatalogTitle) -> Unit, onDetails: (CatalogTitle) -> Unit) {
-    // Movies resume directly (the player restores the saved position); episodes open the series.
-    if (item.progress.episodeId == null && item.title.availability is Availability.Playable) onPlay(item.title) else onDetails(item.title)
+/** Save the last title in Navigation's saveable state, including across Details and Back. */
+@Composable
+private fun rememberTitleFocus(key: String, lastFocusedTitle: String?, onFocused: (String) -> Unit): Modifier {
+    val requester = remember { FocusRequester() }
+    val inputMode = androidx.compose.ui.platform.LocalInputModeManager.current
+    val isTv = DeviceUtils.isTv(LocalContext.current)
+    LaunchedEffect(Unit) {
+        if (isTv && key == lastFocusedTitle) {
+            inputMode.requestInputMode(androidx.compose.ui.input.InputMode.Keyboard)
+            requester.requestFocus()
+        }
+    }
+    return Modifier.focusRequester(requester).onFocusChanged {
+        if (it.isFocused) onFocused(key)
+    }
 }
 
 /** Landscape card with real progress from the local store. */
 @Composable
-private fun ProgressCard(item: ContinueItem, width: Dp, onClick: () -> Unit) {
+private fun ProgressCard(item: ContinueItem, width: Dp, focusModifier: Modifier, onClick: () -> Unit) {
     val interaction = remember { MutableInteractionSource() }
     val focused by interaction.collectIsFocusedAsState()
     val pct = (item.progress.fraction * 100).toInt()
     val cd = item.title.title + ", " + stringResource(R.string.cine_progress_cd, pct)
     Column(Modifier.width(width)) {
         Box(
-            Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(CinematicShapes.card)
-                .then(if (focused) Modifier.border(3.dp, CinematicColors.Focus, CinematicShapes.card) else Modifier)
-                .background(CinematicColors.Surface)
+            Modifier.then(focusModifier).fillMaxWidth().aspectRatio(16f / 9f).clip(CinematicShapes.card)
+                .then(if (focused) Modifier.border(4.dp, MaterialTheme.colorScheme.primary, CinematicShapes.card) else Modifier)
+                .background(MaterialTheme.colorScheme.surface)
                 .clickable(interactionSource = interaction, indication = null, onClick = onClick)
                 .semantics { contentDescription = cd },
         ) {
             AsyncImage(model = item.title.backdropUrl ?: item.title.posterUrl, contentDescription = null,
                 contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
             Box(Modifier.fillMaxSize().background(CinematicScrims.card))
-            Icon(Icons.Default.PlayArrow, contentDescription = null, tint = CinematicColors.TextPrimary,
+            Icon(Icons.Default.Info, contentDescription = null, tint = Color.White,
                 modifier = Modifier.align(Alignment.Center).size(36.dp))
             LinearProgressIndicator(
-                progress = { item.progress.fraction }, color = CinematicColors.Accent, trackColor = CinematicColors.Outline,
+                progress = { item.progress.fraction }, color = MaterialTheme.colorScheme.primary,
+                trackColor = MaterialTheme.colorScheme.surfaceVariant,
                 modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(3.dp),
             )
         }
-        Text(item.title.title, color = CinematicColors.TextPrimary, fontSize = 13.sp, maxLines = 1,
-            overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 6.dp))
+        Text(item.title.title, color = if (focused) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
+            fontSize = 13.sp, maxLines = 1, fontWeight = if (focused) FontWeight.Bold else FontWeight.Normal,
+            overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 6.dp).fillMaxWidth()
+                .background(if (focused) MaterialTheme.colorScheme.primary else Color.Transparent).padding(4.dp))
     }
 }
 
@@ -416,3 +484,5 @@ private fun HomeSkeleton(gutter: Dp, posterWidth: Dp) {
         }
     }
 }
+
+/** TV: the hero Play button gets initial focus exactly once per process (no focus stealing on carousel advance). */

@@ -390,6 +390,7 @@ class VideoPlayerActivity : ComponentActivity() {
     }
 }
 
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @Composable
 fun VideoPlayerScreen(
     videoUrl: String,
@@ -748,6 +749,67 @@ fun VideoPlayerScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black)
+
+    ) {
+        // Check if player is initialized
+        if (exoPlayer == null) {
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "Initializing player...",
+                    color = Color.White,
+                    modifier = Modifier.padding(16.dp)
+                )
+            }
+            return@Box
+        }
+
+        // Video player
+        AndroidView(
+            factory = { ctx ->
+                try {
+                    PlayerView(ctx).apply {
+                        player = exoPlayer
+                        useController = false // We're using our own controls
+                        layoutParams = FrameLayout.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.MATCH_PARENT
+                        )
+                        // Make the player view fill the entire screen
+                        resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+
+                        // Apply subtitle settings to the player view
+                        // Set subtitle styling with custom font
+                        setSubtitleTextSize(subtitleSettings.textSize)
+                        setSubtitleColors(subtitleSettings, customTypeface)
+                    }
+                } catch (e: Exception) {
+                    // Return a simple view if PlayerView fails to initialize
+                    View(ctx).apply {
+                        setBackgroundColor(android.graphics.Color.BLACK)
+                    }
+                }
+            },
+            modifier = Modifier.fillMaxSize(),
+            update = { playerView ->
+                try {
+                    // Update the player view when subtitle settings change
+                    // Update subtitle styling when settings change
+                    if (playerView is PlayerView) {
+                        playerView.setSubtitleTextSize(subtitleSettings.textSize)
+                        playerView.setSubtitleColors(subtitleSettings, customTypeface)
+                    }
+                } catch (e: Exception) {
+                    // Ignore update errors
+                }
+            }
+        )
+
+        // Keep gestures above AndroidView so PlayerView cannot consume video taps.
+        // Controls are composed later and keep their own touch targets.
+        Box(Modifier.fillMaxSize()
             .pointerInput(Unit) {
                 try {
                     detectTapGestures(
@@ -826,63 +888,8 @@ fun VideoPlayerScreen(
                     // Ignore gesture detection errors
                 }
             }
-    ) {
-        // Check if player is initialized
-        if (exoPlayer == null) {
-            Box(
-                modifier = Modifier.fillMaxSize(),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = "Initializing player...",
-                    color = Color.White,
-                    modifier = Modifier.padding(16.dp)
-                )
-            }
-            return@Box
-        }
-        
-        // Video player
-        AndroidView(
-            factory = { ctx ->
-                try {
-                    PlayerView(ctx).apply {
-                        player = exoPlayer
-                        useController = false // We're using our own controls
-                        layoutParams = FrameLayout.LayoutParams(
-                            ViewGroup.LayoutParams.MATCH_PARENT,
-                            ViewGroup.LayoutParams.MATCH_PARENT
-                        )
-                        // Make the player view fill the entire screen
-                        resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
-                        
-                        // Apply subtitle settings to the player view
-                        // Set subtitle styling with custom font
-                        setSubtitleTextSize(subtitleSettings.textSize)
-                        setSubtitleColors(subtitleSettings, customTypeface)
-                    }
-                } catch (e: Exception) {
-                    // Return a simple view if PlayerView fails to initialize
-                    View(ctx).apply {
-                        setBackgroundColor(android.graphics.Color.BLACK)
-                    }
-                }
-            },
-            modifier = Modifier.fillMaxSize(),
-            update = { playerView ->
-                try {
-                    // Update the player view when subtitle settings change
-                    // Update subtitle styling when settings change
-                    if (playerView is PlayerView) {
-                        playerView.setSubtitleTextSize(subtitleSettings.textSize)
-                        playerView.setSubtitleColors(subtitleSettings, customTypeface)
-                    }
-                } catch (e: Exception) {
-                    // Ignore update errors
-                }
-            }
         )
-        
+
         // Rewind indicator
         if (showRewindIndicator) {
             Box(
@@ -1198,6 +1205,7 @@ fun VideoPlayerScreen(
     }
 }
 
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @Composable
 fun TrackSelectionDialog(
     tracks: Tracks,

@@ -6,7 +6,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
 
 data class ThemeSettings(
-    val themeMode: ThemeMode = ThemeMode.SYSTEM,
+    val themeMode: ThemeMode = ThemeMode.DARK,
     val primaryColor: Color = defaultPrimaryColor
     // Removed secondaryColor as it's no longer used
 )

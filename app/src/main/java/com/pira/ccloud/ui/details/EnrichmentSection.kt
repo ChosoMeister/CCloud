@@ -1,5 +1,6 @@
 package com.pira.ccloud.ui.details
 
+import com.pira.ccloud.core.designsystem.tvFocusIndicator
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.background
@@ -55,6 +56,7 @@ import com.pira.ccloud.core.tmdb.MetadataTitle
 import com.pira.ccloud.core.tmdb.Person
 import com.pira.ccloud.core.tmdb.Review
 import com.pira.ccloud.core.tmdb.TmdbProvider
+import com.pira.ccloud.core.tmdb.TmdbGenre
 
 private val TextHi: Color @Composable get() = MaterialTheme.colorScheme.onSurface
 private val TextMid: Color @Composable get() = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.72f)
@@ -66,10 +68,13 @@ private val Chip: Color @Composable get() = MaterialTheme.colorScheme.onSurface.
  * or when TMDB is disabled / unmatched / failing, so callers fall back to catalog data.
  */
 @Composable
-fun rememberEnrichment(catalogKey: String, titles: List<String>, year: Int?, type: ContentType): Enrichment? {
+fun rememberEnrichment(catalogKey: String, titles: List<String>, year: Int?, type: ContentType,
+                      countries: List<String> = emptyList()): Enrichment? {
     val context = LocalContext.current
-    val state by produceState<Enrichment?>(null, catalogKey) {
-        value = (TmdbProvider.repository(context).enrich(catalogKey, titles, year, type) as? EnrichmentResult.Ready)?.enrichment
+    val repository = remember(context) { TmdbProvider.repository(context) }
+    val initial = remember(catalogKey, countries) { repository.cachedEnrichment(catalogKey, countries) }
+    val state by produceState<Enrichment?>(initial, catalogKey) {
+        if (value == null) value = (repository.enrich(catalogKey, titles, year, type, countries = countries) as? EnrichmentResult.Ready)?.enrichment
     }
     return state
 }
@@ -78,22 +83,26 @@ fun rememberEnrichment(catalogKey: String, titles: List<String>, year: Int?, typ
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun EnrichmentSection(e: Enrichment, modifier: Modifier = Modifier,
-                      onOpenCatalog: ((com.pira.ccloud.data.model.Poster) -> Unit)? = null) {
+                      onOpenCatalog: ((com.pira.ccloud.data.model.Poster) -> Unit)? = null,
+                      onFilterGenre: ((TmdbGenre) -> Unit)? = null,
+                      onFilterPerson: ((Person) -> Unit)? = null) {
     val context = LocalContext.current
     Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(18.dp)) {
         if (e.genres.isNotEmpty()) {
             FlowRow(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 e.genres.forEach { g ->
-                    Text(g, color = TextHi, fontSize = 13.sp, modifier = Modifier.clip(CircleShape).background(Chip)
-                        .padding(horizontal = 14.dp, vertical = 7.dp))
+                    val chip = Modifier.clip(CircleShape).background(Chip)
+                    Text(g.name, color = TextHi, fontSize = 13.sp, modifier = if (onFilterGenre != null) {
+                        chip.tvFocusIndicator().clickable { onFilterGenre(g) }.padding(horizontal = 14.dp, vertical = 7.dp)
+                    } else chip.padding(horizontal = 14.dp, vertical = 7.dp))
                 }
             }
         }
         e.trailer?.let { t ->
             Row(
                 Modifier.padding(horizontal = 16.dp).clip(CircleShape).background(Chip)
-                    .clickable { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(t.url))) }
+                    .tvFocusIndicator().clickable { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(t.url))) }
                     .padding(horizontal = 18.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -109,7 +118,7 @@ fun EnrichmentSection(e: Enrichment, modifier: Modifier = Modifier,
         if (e.cast.isNotEmpty()) {
             SectionTitle("Cast")
             LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                items(e.cast, key = { it.id }) { CastItem(it) }
+                items(e.cast, key = { it.id }) { CastItem(it, onFilterPerson) }
             }
         }
         if (e.reviews.isNotEmpty()) {
@@ -145,8 +154,10 @@ private fun SectionTitle(text: String) {
 }
 
 @Composable
-private fun CastItem(p: Person) {
-    Column(Modifier.width(84.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+private fun CastItem(p: Person, onClick: ((Person) -> Unit)?) {
+    val itemModifier = Modifier.width(84.dp)
+    Column(if (onClick != null) itemModifier.tvFocusIndicator().clickable { onClick(p) } else itemModifier,
+        horizontalAlignment = Alignment.CenterHorizontally) {
         Box(Modifier.size(76.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceVariant), contentAlignment = Alignment.Center) {
             val initials = p.name.split(" ").filter { it.isNotBlank() }.take(2).joinToString("") { it.take(1) }.uppercase()
             Text(initials, color = TextMid, fontWeight = FontWeight.Bold, fontSize = 18.sp)
@@ -163,7 +174,7 @@ private fun CastItem(p: Person) {
 private fun ReviewCard(r: Review) {
     var expanded by rememberSaveable(r.id) { mutableStateOf(false) }
     Column(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Chip).clickable { expanded = !expanded }.padding(14.dp),
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Chip).tvFocusIndicator().clickable { expanded = !expanded }.padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -177,7 +188,7 @@ private fun ReviewCard(r: Review) {
 
 @Composable
 private fun RecommendationCard(m: MetadataTitle, onClick: () -> Unit) {
-    Column(Modifier.width(110.dp).clip(RoundedCornerShape(12.dp)).clickable(onClick = onClick)) {
+    Column(Modifier.width(110.dp).clip(RoundedCornerShape(12.dp)).tvFocusIndicator().clickable(onClick = onClick)) {
         AsyncImage(m.posterUrl, m.title, contentScale = ContentScale.Crop,
             modifier = Modifier.fillMaxWidth().aspectRatio(2f / 3f).clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceVariant))
         Text(m.title, color = TextHi, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp))

@@ -1,155 +1,127 @@
 package com.pira.ccloud.navigation
 
-import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
+import androidx.compose.foundation.focusGroup
+import androidx.compose.foundation.border
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material3.Icon
-import androidx.compose.material3.NavigationRail
-import androidx.compose.material3.NavigationRailItem
-import androidx.compose.material3.NavigationRailItemDefaults
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.scale
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
-import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.NavGraph.Companion.findStartDestination
+import androidx.navigation.compose.currentBackStackEntryAsState
+import com.pira.ccloud.core.designsystem.liquidGlassSurface
 
+/**
+ * Cinematic side rail (30nama / Filimo / Namava pattern) for TV and landscape:
+ * a slim dark column beside the content, so artwork is never covered.
+ * D-pad friendly: every item has a single focus target and a clear white focus pill.
+ */
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
-fun SidebarNavigation(navController: NavController) {
+fun SidebarNavigation(navController: NavController, modifier: Modifier = Modifier, compact: Boolean = false) {
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
-
-    NavigationRail(
-        modifier = Modifier
-            .fillMaxHeight()
-            .width(100.dp) // Increased width for better TV experience
-            .padding(top = 24.dp, bottom = 24.dp), // Add padding top and bottom
-        containerColor = androidx.compose.material3.MaterialTheme.colorScheme.surface,
-        header = {
-            // Optional header content
-            Spacer(modifier = Modifier.height(16.dp))
+    val screens = AppScreens.screens.filter { it.showSidebar }
+    val requesters = remember { screens.associate { it.route to FocusRequester() } }
+    var pendingRoute by rememberSaveable { mutableStateOf<String?>(null) }
+    var activeSection by rememberSaveable { mutableStateOf(AppScreens.Home.route) }
+    LaunchedEffect(currentRoute) {
+        if (currentRoute in requesters) activeSection = currentRoute!!
+        if (pendingRoute == currentRoute) {
+            requesters[currentRoute]?.requestFocus()
+            pendingRoute = null
         }
+    }
+    Column(
+        modifier
+            .focusProperties { enter = { requesters[currentRoute] ?: requesters[activeSection] ?: FocusRequester.Default } }
+            .focusGroup()
+            .fillMaxHeight()
+            .width(if (compact) 76.dp else 96.dp)
+            .liquidGlassSurface(RoundedCornerShape(0.dp), MaterialTheme.colorScheme.surface.copy(alpha = 0.96f))
+            .statusBarsPadding()
+            .navigationBarsPadding()
+            .padding(vertical = 20.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(if (compact) 6.dp else 12.dp, Alignment.CenterVertically),
     ) {
-        Column(
-            modifier = Modifier.fillMaxHeight(),
-            verticalArrangement = Arrangement.SpaceBetween
-        ) {
-            Column(
-                verticalArrangement = Arrangement.spacedBy(28.dp) // Increased spacing between items
-            ) {
-                AppScreens.screens.filter { it.showSidebar }.forEach { screen ->
-                    val isSelected = currentRoute == screen.route
-                    val scale by animateFloatAsState(
-                        targetValue = if (isSelected) 1.1f else 1f,
-                        animationSpec = tween(durationMillis = 200),
-                        label = "scale"
-                    )
-                    
-                    val iconColor by animateColorAsState(
-                        targetValue = if (isSelected) 
-                            androidx.compose.material3.MaterialTheme.colorScheme.primary 
-                        else 
-                            androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
-                        animationSpec = tween(durationMillis = 200),
-                        label = "iconColor"
-                    )
-                    
-                    val textColor by animateColorAsState(
-                        targetValue = if (isSelected) 
-                            androidx.compose.material3.MaterialTheme.colorScheme.primary 
-                        else 
-                            androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
-                        animationSpec = tween(durationMillis = 200),
-                        label = "textColor"
-                    )
-
-                    NavigationRailItem(
-                        icon = {
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                modifier = Modifier.padding(horizontal = 22.dp) // Add horizontal padding
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(64.dp) // Increased size for better TV experience
-                                        .scale(scale),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    if (isSelected) {
-                                        androidx.compose.material3.Surface(
-                                            modifier = Modifier.size(48.dp), // Increased size
-                                            shape = CircleShape,
-                                            color = androidx.compose.material3.MaterialTheme.colorScheme.primary.copy(alpha = 0.1f)
-                                        ) {}
-                                    }
-                                    Icon(
-                                        imageVector = screen.icon ?: Icons.Default.Movie, // Provide a fallback icon
-                                        contentDescription = stringResource(screen.resourceId),
-                                        tint = iconColor,
-                                        modifier = Modifier.size(32.dp) // Increased size
-                                    )
-                                }
-                                // Spacer(modifier = Modifier.height(2.dp)) // Increased spacing
-                                Text(
-                                    text = stringResource(screen.resourceId),
-                                    color = textColor,
-                                    fontSize = androidx.compose.material3.MaterialTheme.typography.labelMedium.fontSize, // Increased font size
-                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                    maxLines = 1
-                                )
-                            }
-                        },
-                        label = null, // We're using custom label in icon
-                        selected = isSelected,
-                        onClick = {
-                            // Only navigate if we're not already on the selected screen
-                            if (currentRoute != screen.route) {
-                                navController.navigate(screen.route) {
-                                    // Avoid multiple copies of the same destination when
-                                    // reselecting the same item
-                                    launchSingleTop = true
-                                    // Restore state when reselecting a previously selected item
-                                    restoreState = true
-                                    // Pop up to the current destination to avoid building up a large stack
-                                    popUpTo(navController.graph.findStartDestination().id) {
-                                        saveState = true
-                                    }
-                                }
-                            }
-                        },
-                        colors = NavigationRailItemDefaults.colors(
-                            selectedIconColor = androidx.compose.material3.MaterialTheme.colorScheme.primary,
-                            unselectedIconColor = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
-                            selectedTextColor = androidx.compose.material3.MaterialTheme.colorScheme.primary,
-                            unselectedTextColor = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
-                            indicatorColor = Color.Transparent
-                        )
-                    )
-                }
+        screens.forEach { screen ->
+            val selected = currentRoute == screen.route || (currentRoute !in requesters && activeSection == screen.route)
+            val interaction = remember { MutableInteractionSource() }
+            val focused by interaction.collectIsFocusedAsState()
+            val bg = when {
+                focused -> MaterialTheme.colorScheme.primary
+                selected -> MaterialTheme.colorScheme.primaryContainer
+                else -> Color.Transparent
             }
-            
-            // Optional footer content like settings
-            Spacer(modifier = Modifier.height(24.dp))
+            val fg = when {
+                focused -> MaterialTheme.colorScheme.onPrimary
+                selected -> MaterialTheme.colorScheme.onPrimaryContainer
+                else -> MaterialTheme.colorScheme.onSurfaceVariant
+            }
+            Column(
+                Modifier
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(bg)
+                    .then(if (focused) Modifier.border(3.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(16.dp)) else Modifier)
+                    .focusRequester(requesters.getValue(screen.route))
+                    .clickable(interactionSource = interaction, indication = null) {
+                        if (currentRoute != screen.route) {
+                            pendingRoute = screen.route
+                            navController.navigate(screen.route) {
+                                launchSingleTop = true
+                                restoreState = true
+                                popUpTo(AppScreens.Home.route) { saveState = true }
+                            }
+                        }
+                    }
+                    .padding(horizontal = 8.dp, vertical = if (compact) 8.dp else 10.dp)
+                    .width(if (compact) 56.dp else 72.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(screen.icon ?: Icons.Default.Movie, stringResource(screen.resourceId), tint = fg,
+                        modifier = Modifier.size(if (compact) 24.dp else 28.dp))
+                }
+                Spacer(Modifier.height(4.dp))
+                Text(stringResource(screen.resourceId), color = fg, fontSize = if (compact) 10.sp else 12.sp,
+                    fontWeight = if (selected || focused) FontWeight.Bold else FontWeight.Medium, maxLines = 1)
+            }
         }
     }
 }

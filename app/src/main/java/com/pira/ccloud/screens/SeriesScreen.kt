@@ -1,5 +1,7 @@
 package com.pira.ccloud.screens
 
+import androidx.compose.runtime.saveable.rememberSaveable
+import com.pira.ccloud.core.designsystem.rememberGridReturnFocus
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
@@ -281,6 +283,7 @@ fun SeriesGrid(
     onLoadMore: () -> Unit,
     navController: NavController? = null
 ) {
+    var restoreFocusKey by rememberSaveable { androidx.compose.runtime.mutableStateOf<String?>(null) }
     val seriesList = series.toList()
     val context = LocalContext.current
     
@@ -291,14 +294,17 @@ fun SeriesGrid(
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        itemsIndexed(seriesList) { index, seriesItem ->
+        itemsIndexed(seriesList, key = { _, item -> item.id }) { index, seriesItem ->
             SeriesItem(
                 series = seriesItem,
+                focusModifier = rememberGridReturnFocus(seriesItem.id.toString(), restoreFocusKey) { restoreFocusKey = null },
                 onClick = {
+                    restoreFocusKey = seriesItem.id.toString()
+
                     // Save series to storage
-                    StorageUtils.saveSeriesToFile(context, seriesItem)
+                    /* Saved by CatalogNavigation on IO. */
                     // Navigate to single series screen
-                    navController?.navigate("single_series/${seriesItem.id}")
+                    navController?.let { com.pira.ccloud.core.catalog.CatalogNavigation.openSeries(context, it, seriesItem) }
                 }
             )
             
@@ -380,7 +386,8 @@ fun ModernCircularProgressIndicatorSeries() {
 @Composable
 fun SeriesItem(
     series: com.pira.ccloud.data.model.Series,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    focusModifier: Modifier = Modifier,
 ) {
     PosterGridCard(
         title = series.title,
@@ -388,6 +395,7 @@ fun SeriesItem(
         rating = series.imdb,
         subtitle = listOfNotNull(series.year.takeIf { it > 0 }?.toString(), series.genres.firstOrNull()?.title).joinToString(" · "),
         onClick = onClick,
+        focusModifier = focusModifier,
     )
 }
 

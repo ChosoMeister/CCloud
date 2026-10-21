@@ -1,5 +1,9 @@
 package com.pira.ccloud.screens
 
+import androidx.compose.runtime.saveable.rememberSaveable
+import com.pira.ccloud.core.designsystem.rememberGridReturnFocus
+import com.pira.ccloud.core.designsystem.tvSafeMenuHeight
+import com.pira.ccloud.core.designsystem.tvFocusIndicator
 import android.content.Context
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
@@ -14,6 +18,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -45,6 +50,22 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
+import androidx.compose.foundation.focusGroup
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.LinearProgressIndicator
+import com.pira.ccloud.core.model.ContentType
+import kotlinx.coroutines.launch
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -74,269 +95,133 @@ import com.pira.ccloud.R
 import com.pira.ccloud.data.model.Country
 import com.pira.ccloud.data.model.Poster
 import com.pira.ccloud.ui.search.SearchViewModel
+import com.pira.ccloud.ui.search.SearchNavigation
 import com.pira.ccloud.utils.DeviceUtils
 import com.pira.ccloud.utils.StorageUtils
 
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class, androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
-fun SearchScreen(
-    viewModel: SearchViewModel = viewModel(),
-    navController: NavController? = null
-) {
+fun SearchScreen(viewModel: SearchViewModel = viewModel(), navController: NavController? = null) {
     val context = LocalContext.current
     val focusManager = LocalFocusManager.current
-    val focusRequester = remember { FocusRequester() }
-    
-    // Request focus when the screen is first displayed to ensure keyboard opens on TV
-    LaunchedEffect(Unit) {
-        focusRequester.requestFocus()
+    val fieldFocus = remember { FocusRequester() }
+    val keyboard = LocalSoftwareKeyboardController.current
+    val scope = rememberCoroutineScope()
+    val isTv = DeviceUtils.isTv(context)
+    var genresExpanded by remember { mutableStateOf(false) }
+    val pendingFilter = SearchNavigation.pendingFilter
+    LaunchedEffect(pendingFilter) {
+        pendingFilter?.let {
+            viewModel.applyMetadataFilter(it.type, it.genre, it.person)
+            SearchNavigation.pendingFilter = null
+        }
     }
-    
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp)
-    ) {
-        // Search bar
-        TextField(
-            value = viewModel.searchQuery,
-            onValueChange = { viewModel.updateSearchQuery(it) },
-            modifier = Modifier
-                .fillMaxWidth()
-                .focusRequester(focusRequester)
-                .clickable { 
-                    // Ensure keyboard opens when clicking on the TextField on TV
-                    focusRequester.requestFocus()
+    val openKeyboard: () -> Unit = {
+        scope.launch {
+            fieldFocus.requestFocus()
+            androidx.compose.runtime.withFrameNanos { }
+            keyboard?.show()
+        }
+    }
+    val submit: () -> Unit = {
+        keyboard?.hide()
+        if (isTv) focusManager.moveFocus(androidx.compose.ui.focus.FocusDirection.Down) else focusManager.clearFocus()
+        viewModel.triggerSearch()
+    }
+    Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)
+        .focusProperties { enter = { fieldFocus } }.focusGroup().padding(16.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+            TextField(
+                value = viewModel.searchQuery,
+                onValueChange = viewModel::updateSearchQuery,
+                modifier = Modifier.weight(1f).focusRequester(fieldFocus).tvFocusIndicator()
+                    .onPreviewKeyEvent { event ->
+                        if (isTv && (event.key == Key.DirectionCenter || event.key == Key.Enter)) {
+                            if (event.type == KeyEventType.KeyUp) openKeyboard()
+                            true
+                        } else false
+                    },
+                placeholder = { Text("Search movies and series...", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                leadingIcon = { Icon(Icons.Default.Search, "Search") },
+                trailingIcon = {
+                    if (viewModel.searchQuery.isNotEmpty()) IconButton(
+                        onClick = viewModel::clearSearch, modifier = Modifier.tvFocusIndicator()
+                    ) { Icon(Icons.Default.Clear, "Clear") }
                 },
-            placeholder = { 
-                Text(
-                    text = "Search movies and series...",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                ) 
-            },
-            leadingIcon = {
-                IconButton(onClick = { 
-                    // Trigger search when clicking search icon
-                    if (viewModel.searchQuery.isNotEmpty()) {
-                        viewModel.triggerSearch()
-                        focusManager.clearFocus()
-                    }
-                }) {
-                    Icon(
-                        imageVector = Icons.Default.Search,
-                        contentDescription = "Search",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            },
-            trailingIcon = {
-                if (viewModel.searchQuery.isNotEmpty()) {
-                    IconButton(onClick = { 
-                        viewModel.clearSearch()
-                        focusManager.clearFocus() // Dismiss keyboard when clearing search
-                    }) {
-                        Icon(
-                            imageVector = Icons.Default.Clear,
-                            contentDescription = "Clear",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-            },
-            keyboardOptions = KeyboardOptions(
-                imeAction = ImeAction.Search
-            ),
-            keyboardActions = KeyboardActions(
-                onSearch = {
-                    // Trigger search when pressing Enter
-                    if (viewModel.searchQuery.isNotEmpty()) {
-                        viewModel.triggerSearch()
-                    }
-                    focusManager.clearFocus()
-                }
-            ),
-            colors = TextFieldDefaults.colors(
-                focusedIndicatorColor = Color.Transparent,
-                unfocusedIndicatorColor = Color.Transparent,
-                disabledIndicatorColor = Color.Transparent,
-                focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
-                unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
-            ),
-            shape = RoundedCornerShape(24.dp),
-            singleLine = true
-        )
-        
-        // Country stories section - only visible when no search has been performed
-        if (!viewModel.hasSearched) {
-            if (viewModel.isCountriesLoading) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 16.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(24.dp),
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                }
-            } else if (viewModel.countries.isNotEmpty()) {
-                LazyRow(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    items(viewModel.countries) { country ->
-                        CountryStoryItem(
-                            country = country,
-                            onClick = {
-                                // Navigate to country screen
-                                navController?.navigate("country/${country.id}")
-                            }
-                        )
-                    }
-                }
-            }
-        }
-        
-        Spacer(modifier = Modifier.height(16.dp))
-        
-        // Search results
-        when {
-            viewModel.isLoading -> {
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(48.dp),
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                }
-            }
-            viewModel.errorMessage != null -> {
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        Text(
-                            text = "Error: ${viewModel.errorMessage}",
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = MaterialTheme.colorScheme.error
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            text = "Please try again",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Spacer(modifier = Modifier.height(16.dp))
-                        Button(
-                            onClick = { viewModel.triggerSearch() },
-                            modifier = Modifier.padding(16.dp)
-                        ) {
-                            Text("Retry")
-                        }
-                    }
-                }
-            }
-            viewModel.searchResults.isNotEmpty() -> {
-                SearchResultsGrid(
-                    posters = viewModel.searchResults,
-                    navController = navController,
-                    context = context
-                )
-            }
-            // Only show "No results found" after a search has been performed
-            viewModel.hasSearched && viewModel.searchQuery.isNotEmpty() && !viewModel.isLoading -> {
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = "No results found",
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-            else -> {
-                // Initial state - show search instructions
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Search,
-                            contentDescription = "Search",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(48.dp)
-                        )
-                        Spacer(modifier = Modifier.height(16.dp))
-                        Text(
-                            text = "Search for movies and series",
-                            style = MaterialTheme.typography.headlineSmall,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            text = "Enter a keyword to start searching",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun CountryStoryItem(
-    country: com.pira.ccloud.data.model.Country,
-    onClick: () -> Unit
-) {
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier.clickable { onClick() }
-    ) {
-        Box(
-            modifier = Modifier
-                .size(60.dp)
-                .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.surfaceVariant),
-            contentAlignment = Alignment.Center
-        ) {
-            Image(
-                painter = rememberAsyncImagePainter(
-                    ImageRequest.Builder(LocalContext.current)
-                        .data(country.image)
-                        .crossfade(true)
-                        .build()
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search, showKeyboardOnFocus = !isTv),
+                keyboardActions = KeyboardActions(onSearch = { submit() }),
+                singleLine = true,
+                shape = RoundedCornerShape(16.dp),
+                colors = TextFieldDefaults.colors(
+                    focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent,
+                    focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
+                    unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
                 ),
-                contentDescription = country.title,
-                modifier = Modifier
-                    .size(56.dp)
-                    .clip(CircleShape),
-                contentScale = ContentScale.Crop
             )
+            Button(onClick = submit, modifier = Modifier.tvFocusIndicator()) { Text("Search") }
         }
-        Spacer(modifier = Modifier.height(4.dp))
-        Text(
-            text = country.title,
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurface,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.width(70.dp),
-            textAlign = TextAlign.Center
-        )
+        FlowRow(Modifier.fillMaxWidth().padding(top = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            listOf("All" to null, "Movies" to ContentType.MOVIE, "Series" to ContentType.SERIES).forEach { (label, type) ->
+                FilterChip(selected = viewModel.mediaType == type,
+                    onClick = { keyboard?.hide(); viewModel.selectMedia(type) },
+                    label = { Text(label) }, modifier = Modifier.tvFocusIndicator())
+            }
+            Box {
+                OutlinedButton(onClick = { genresExpanded = true },
+                    enabled = viewModel.mediaType != null && !viewModel.isGenresLoading,
+                    modifier = Modifier.tvFocusIndicator()) {
+                    Text(if (viewModel.isGenresLoading) "Loading genres..." else viewModel.selectedGenre?.name ?: "TMDB genres", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                DropdownMenu(modifier = Modifier.tvSafeMenuHeight(), expanded = genresExpanded, onDismissRequest = { genresExpanded = false }) {
+                    DropdownMenuItem(text = { Text("All genres") }, onClick = {
+                        genresExpanded = false; viewModel.selectGenre(null)
+                    })
+                    viewModel.genres.forEach { genre ->
+                        DropdownMenuItem(text = { Text(genre.name) }, onClick = {
+                            genresExpanded = false; viewModel.selectGenre(genre)
+                        })
+                    }
+                }
+            }
+            viewModel.selectedPerson?.let { person ->
+                FilterChip(selected = true, onClick = { viewModel.selectPerson(null) },
+                    label = { Text("Actor: ${person.name}  ×", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                    modifier = Modifier.tvFocusIndicator())
+            }
+        }
+        viewModel.genreError?.let { Text(it, color = MaterialTheme.colorScheme.error,
+            style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(vertical = 6.dp)) }
+        if (viewModel.mediaType != null) Text("TMDB genres · Titles available in CCloud",
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(12.dp))
+        if ((viewModel.isLoading || viewModel.isLoadingMore) && viewModel.searchResults.isNotEmpty()) LinearProgressIndicator(Modifier.fillMaxWidth())
+        Box(Modifier.weight(1f).fillMaxWidth()) {
+            when {
+                viewModel.searchResults.isNotEmpty() -> SearchResultsGrid(
+                    viewModel.searchResults, navController, context,
+                    isLoading = viewModel.isLoading,
+                    isLoadingMore = viewModel.isLoadingMore,
+                    canLoadMore = viewModel.canLoadMore,
+                    onLoadMore = viewModel::loadMore,
+                )
+                viewModel.isLoading -> CircularProgressIndicator(Modifier.align(Alignment.Center).size(32.dp))
+                viewModel.errorMessage != null -> Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(viewModel.errorMessage.orEmpty(), color = MaterialTheme.colorScheme.error)
+                    Button(onClick = viewModel::triggerSearch, modifier = Modifier.tvFocusIndicator()) { Text("Retry") }
+                }
+                else -> Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(Icons.Default.Search, null, modifier = Modifier.size(40.dp))
+                    Spacer(Modifier.height(12.dp))
+                    Text(if (viewModel.hasSearched) "No matching titles in CCloud" else "Search movies and series",
+                        style = MaterialTheme.typography.titleLarge)
+                    Text(if (viewModel.hasSearched) "Try another genre or search term" else if (isTv) "Press OK on the search field to type, or choose Movies / Series for TMDB genres"
+                        else "Tap the search field to type, or choose Movies / Series for TMDB genres",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
+                }
+            }
+        }
     }
 }
 
@@ -344,30 +229,43 @@ fun CountryStoryItem(
 fun SearchResultsGrid(
     posters: List<Poster>,
     navController: NavController?,
-    context: Context
+    context: Context,
+    isLoading: Boolean = false,
+    isLoadingMore: Boolean = false,
+    canLoadMore: Boolean = false,
+    onLoadMore: () -> Unit = {},
 ) {
+    var restoreFocusKey by rememberSaveable { androidx.compose.runtime.mutableStateOf<String?>(null) }
+    val gridState = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
+    LaunchedEffect(gridState, posters.size, isLoading, isLoadingMore, canLoadMore) {
+        androidx.compose.runtime.snapshotFlow { gridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1 }
+            .collect { lastVisibleIndex ->
+                if (canLoadMore && !isLoading && !isLoadingMore && lastVisibleIndex >= posters.size - 3) onLoadMore()
+            }
+    }
     LazyVerticalGrid(
         columns = GridCells.Adaptive(minSize = 112.dp),
+        state = gridState,
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(0.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        items(posters) { poster ->
+        items(posters, key = { (if (it.isSeries()) "series:" else "movie:") + it.id }) { poster ->
             PosterItem(
                 poster = poster,
+                focusModifier = rememberGridReturnFocus((if (poster.isSeries()) "series:" else "movie:") + poster.id, restoreFocusKey) { restoreFocusKey = null },
                 onClick = {
-                    if (poster.isMovie()) {
-                        // Save movie to storage and navigate to single movie screen
-                        StorageUtils.saveMovieToFile(context, poster.toMovie())
-                        navController?.navigate("single_movie/${poster.id}")
-                    } else if (poster.isSeries()) {
-                        // Save series to storage and navigate to single series screen
-                        StorageUtils.saveSeriesToFile(context, poster.toSeries())
-                        navController?.navigate("single_series/${poster.id}")
-                    }
+                    restoreFocusKey = (if (poster.isSeries()) "series:" else "movie:") + poster.id
+
+                    navController?.let { com.pira.ccloud.core.catalog.CatalogNavigation.openPoster(context, it, poster) }
                 }
             )
+        }
+        if (isLoadingMore) item {
+            Box(Modifier.fillMaxWidth().padding(20.dp), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator(Modifier.size(28.dp))
+            }
         }
     }
 }
@@ -375,7 +273,8 @@ fun SearchResultsGrid(
 @Composable
 fun PosterItem(
     poster: Poster,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    focusModifier: Modifier = Modifier,
 ) {
     PosterGridCard(
         title = poster.title,
@@ -387,5 +286,6 @@ fun PosterItem(
             poster.genres.firstOrNull()?.title,
         ).joinToString(" · "),
         onClick = onClick,
+        focusModifier = focusModifier,
     )
 }
