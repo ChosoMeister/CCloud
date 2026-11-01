@@ -1,5 +1,7 @@
 package com.pira.ccloud.components
 
+import com.pira.ccloud.core.designsystem.tvSafeMenuHeight
+import com.pira.ccloud.core.designsystem.tvFocusIndicator
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -86,7 +88,7 @@ fun FilterTypeSelector(
         modifier = Modifier
             .width(150.dp)
             .height(36.dp)
-            .clickable { expanded = true },
+            .tvFocusIndicator().clickable { expanded = true },
         shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.primary
@@ -121,6 +123,7 @@ fun FilterTypeSelector(
             }
             
             DropdownMenu(
+                modifier = Modifier.tvSafeMenuHeight(),
                 expanded = expanded,
                 onDismissRequest = { expanded = false }
             ) {
@@ -169,7 +172,7 @@ fun GenreSelector(
         modifier = Modifier
             .width(150.dp)
             .height(36.dp)
-            .clickable { expanded = true },
+            .tvFocusIndicator().clickable { expanded = true },
         shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.secondary
@@ -200,6 +203,7 @@ fun GenreSelector(
             }
             
             DropdownMenu(
+                modifier = Modifier.tvSafeMenuHeight(),
                 expanded = expanded,
                 onDismissRequest = { expanded = false }
             ) {

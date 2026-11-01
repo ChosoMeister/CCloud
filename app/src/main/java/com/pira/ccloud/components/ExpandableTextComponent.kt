@@ -1,5 +1,6 @@
 package com.pira.ccloud.components
 
+import com.pira.ccloud.core.designsystem.tvFocusIndicator
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -36,7 +37,9 @@ import androidx.compose.ui.zIndex
 fun ExpandableText(
     text: String,
     modifier: Modifier = Modifier,
-    collapsedMaxLines: Int = 2
+    collapsedMaxLines: Int = 2,
+    textColor: Color = MaterialTheme.colorScheme.onSurface,
+    actionColor: Color = MaterialTheme.colorScheme.primary,
 ) {
     var expanded by remember { mutableStateOf(false) }
     var showReadMore by remember { mutableStateOf(false) }
@@ -51,7 +54,7 @@ fun ExpandableText(
             Text(
                 text = text,
                 style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurface,
+                color = textColor,
                 modifier = Modifier.weight(1f),
                 maxLines = if (expanded) Int.MAX_VALUE else collapsedMaxLines,
                 overflow = TextOverflow.Ellipsis,
@@ -71,13 +74,13 @@ fun ExpandableText(
                     // Show a toast to indicate success
                     android.widget.Toast.makeText(context, "Description copied to clipboard", android.widget.Toast.LENGTH_SHORT).show()
                 },
-                modifier = Modifier
+                modifier = Modifier.tvFocusIndicator()
                     .padding(start = 8.dp)
             ) {
                 Icon(
                     imageVector = Icons.Default.ContentCopy,
                     contentDescription = "Copy description",
-                    tint = MaterialTheme.colorScheme.primary
+                    tint = actionColor
                 )
             }
         }
@@ -87,7 +90,7 @@ fun ExpandableText(
             Card(
                 modifier = Modifier
                     .padding(top = 8.dp)
-                    .clickable { expanded = !expanded }
+                    .tvFocusIndicator().clickable { expanded = !expanded }
                     .clip(RoundedCornerShape(16.dp))
                     .zIndex(1f),
                 shape = RoundedCornerShape(16.dp),
@@ -105,7 +108,7 @@ fun ExpandableText(
                     Text(
                         text = if (expanded) "Show Less" else "Show More",
                         style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.primary,
+                        color = actionColor,
                         fontWeight = FontWeight.Bold
                     )
                 }

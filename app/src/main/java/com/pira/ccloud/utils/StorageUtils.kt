@@ -16,6 +16,11 @@ import java.io.File
 import java.util.Date
 
 object StorageUtils {
+    private val movieMemory = java.util.concurrent.ConcurrentHashMap<Int, Movie>()
+    private val seriesMemory = java.util.concurrent.ConcurrentHashMap<Int, Series>()
+    fun cachedMovie(id: Int): Movie? = movieMemory[id]
+    fun cachedSeries(id: Int): Series? = seriesMemory[id]
+
     private const val TAG = "StorageUtils"
     
     // Favorites functions - using a single JSON file for all favorites
@@ -140,15 +145,24 @@ object StorageUtils {
         }
     }
     
+    @Synchronized
     fun saveMovieToFile(context: Context, movie: Movie) {
         try {
-            // Clear all existing movie files first
-            clearAllMovies(context)
             
             val jsonString = Json.encodeToString(movie)
             val fileName = "movie_${movie.id}.json"
             val file = File(context.filesDir, fileName)
-            file.writeText(jsonString)
+            val atomic = android.util.AtomicFile(file)
+            val output = atomic.startWrite()
+            try {
+                output.write(jsonString.toByteArray(Charsets.UTF_8))
+                atomic.finishWrite(output)
+            } catch (e: Exception) {
+                atomic.failWrite(output)
+                throw e
+            }
+            movieMemory[movie.id] = movie
+            if (movieMemory.size > 64) movieMemory.keys.firstOrNull { it != movie.id }?.let { movieMemory.remove(it) }
             Log.d(TAG, "Movie saved to file: $fileName")
         } catch (e: Exception) {
             Log.e(TAG, "Error saving movie to file", e)
@@ -156,12 +170,13 @@ object StorageUtils {
     }
     
     fun loadMovieFromFile(context: Context, movieId: Int): Movie? {
+        movieMemory[movieId]?.let { return it }
         return try {
             val fileName = "movie_$movieId.json"
             val file = File(context.filesDir, fileName)
             if (file.exists()) {
                 val jsonString = file.readText()
-                Json.decodeFromString<Movie>(jsonString)
+                Json.decodeFromString<Movie>(jsonString).also { movieMemory[movieId] = it }
             } else {
                 null
             }
@@ -175,6 +190,7 @@ object StorageUtils {
      * Delete all movie files from storage
      */
     fun clearAllMovies(context: Context) {
+        movieMemory.clear()
         try {
             val filesDir = context.filesDir
             val movieFiles = filesDir.listFiles { file ->
@@ -191,15 +207,24 @@ object StorageUtils {
     }
     
     // Series functions
+    @Synchronized
     fun saveSeriesToFile(context: Context, series: Series) {
         try {
-            // Clear all existing series files first
-            clearAllSeries(context)
             
             val jsonString = Json.encodeToString(series)
             val fileName = "series_${series.id}.json"
             val file = File(context.filesDir, fileName)
-            file.writeText(jsonString)
+            val atomic = android.util.AtomicFile(file)
+            val output = atomic.startWrite()
+            try {
+                output.write(jsonString.toByteArray(Charsets.UTF_8))
+                atomic.finishWrite(output)
+            } catch (e: Exception) {
+                atomic.failWrite(output)
+                throw e
+            }
+            seriesMemory[series.id] = series
+            if (seriesMemory.size > 64) seriesMemory.keys.firstOrNull { it != series.id }?.let { seriesMemory.remove(it) }
             Log.d(TAG, "Series saved to file: $fileName")
         } catch (e: Exception) {
             Log.e(TAG, "Error saving series to file", e)
@@ -207,12 +232,13 @@ object StorageUtils {
     }
     
     fun loadSeriesFromFile(context: Context, seriesId: Int): Series? {
+        seriesMemory[seriesId]?.let { return it }
         return try {
             val fileName = "series_$seriesId.json"
             val file = File(context.filesDir, fileName)
             if (file.exists()) {
                 val jsonString = file.readText()
-                Json.decodeFromString<Series>(jsonString)
+                Json.decodeFromString<Series>(jsonString).also { seriesMemory[seriesId] = it }
             } else {
                 null
             }
@@ -226,6 +252,7 @@ object StorageUtils {
      * Delete all series files from storage
      */
     fun clearAllSeries(context: Context) {
+        seriesMemory.clear()
         try {
             val filesDir = context.filesDir
             val seriesFiles = filesDir.listFiles { file ->

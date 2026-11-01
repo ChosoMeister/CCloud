@@ -18,13 +18,24 @@ android {
         // Android 7.0 (API 23) and earlier are not supported
         minSdk = 24
         targetSdk = 36
-        versionCode = 21
-        versionName = "2.0.0"
+        versionCode = 22
+        versionName = "2.0.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         
         // Add memory management options
         multiDexEnabled = true
+
+        // Personal-build TMDB token: read from gitignored local.properties (tmdb.token=...).
+        val localProps = Properties().apply {
+            rootProject.file("local.properties").takeIf { it.exists() }?.let { f -> FileInputStream(f).use { load(it) } }
+        }
+        val tmdbToken = providers.environmentVariable("TMDB_TOKEN")
+            .orElse(localProps.getProperty("tmdb.token", ""))
+            .get()
+            .replace("\\", "\\\\")
+            .replace("\"", "\\\"")
+        buildConfigField("String", "TMDB_TOKEN", "\"$tmdbToken\"")
     }
     
     buildFeatures {
@@ -72,6 +83,13 @@ android {
         debug {
             isDebuggable = true
         }
+        create("tvOptimized") {
+            initWith(getByName("release"))
+            signingConfig = signingConfigs.getByName("debug")
+            isDebuggable = false
+            matchingFallbacks += "release"
+        }
+
     }
     
     splits {
@@ -157,6 +175,7 @@ dependencies {
     implementation(libs.androidx.leanback.preference)
     
     testImplementation(libs.junit)
+    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(platform(libs.androidx.compose.bom))

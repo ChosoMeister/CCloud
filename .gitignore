@@ -13,3 +13,6 @@
 .externalNativeBuild
 .cxx
 local.properties
+/key.properties
+/app/keystore.jks
+/release/

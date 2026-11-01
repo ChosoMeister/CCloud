@@ -9,6 +9,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.core.content.edit
+import com.pira.ccloud.utils.DeviceUtils
 
 class ThemeManager(private val context: Context) {
     private val prefs: SharedPreferences = context.getSharedPreferences("theme_prefs", Context.MODE_PRIVATE)
@@ -22,11 +23,18 @@ class ThemeManager(private val context: Context) {
     }
     
     fun loadThemeSettings(): ThemeSettings {
-        val themeModeStr = prefs.getString("theme_mode", ThemeMode.SYSTEM.name) ?: ThemeMode.SYSTEM.name
-        val themeMode = try {
+        val themeModeStr = prefs.getString("theme_mode", ThemeMode.DARK.name) ?: ThemeMode.DARK.name
+        val storedThemeMode = try {
             ThemeMode.valueOf(themeModeStr)
         } catch (e: IllegalArgumentException) {
             ThemeMode.SYSTEM
+        }
+        // Android TV launchers often report a light system theme. Keep CCloud's TV
+        // default cinematic/dark even when an older install saved "System".
+        val themeMode = if (DeviceUtils.isTv(context) && storedThemeMode == ThemeMode.SYSTEM) {
+            ThemeMode.DARK
+        } else {
+            storedThemeMode
         }
         
         val primaryColor = prefs.getInt("primary_color", defaultPrimaryColor.toArgb())

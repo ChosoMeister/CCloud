@@ -11,15 +11,11 @@
         <domain includeSubdomains="true">127.0.0.1</domain>
     </domain-config>
     
-    <!-- Debug overrides for development - allow all cleartext traffic in debug builds -->
+    <!-- Debug-only trust anchors for development -->
     <debug-overrides>
         <trust-anchors>
             <!-- Trust user added CAs while debuggable only -->
             <certificates src="user" />
         </trust-anchors>
-        <!-- Allow cleartext traffic in debug builds -->
-        <domain-config cleartextTrafficPermitted="true">
-            <domain includeSubdomains="true">*</domain>
-        </domain-config>
     </debug-overrides>
 </network-security-config>

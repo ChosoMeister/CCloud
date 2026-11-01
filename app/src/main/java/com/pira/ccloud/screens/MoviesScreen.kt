@@ -1,5 +1,7 @@
 package com.pira.ccloud.screens
 
+import androidx.compose.runtime.saveable.rememberSaveable
+import com.pira.ccloud.core.designsystem.rememberGridReturnFocus
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
@@ -15,6 +17,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.border
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -84,8 +89,16 @@ fun MoviesScreen(
     val selectedGenreId = viewModel.selectedGenreId
     val selectedFilterType = viewModel.selectedFilterType
     
+    val pendingGenre = com.pira.ccloud.ui.details.GenreNavigation.pendingMovieGenre
+    LaunchedEffect(pendingGenre) {
+        pendingGenre?.let {
+            com.pira.ccloud.ui.details.GenreNavigation.pendingMovieGenre = null
+            viewModel.selectGenre(it)
+        }
+    }
+
     LaunchedEffect(Unit) {
-        if (movies.isEmpty()) {
+        if (movies.isEmpty() && pendingGenre == null) {
             viewModel.loadMovies()
         }
     }
@@ -281,25 +294,28 @@ fun MovieGrid(
     onLoadMore: () -> Unit,
     navController: NavController? = null
 ) {
+    var restoreFocusKey by rememberSaveable { androidx.compose.runtime.mutableStateOf<String?>(null) }
     val moviesList = movies.toList()
     val context = LocalContext.current
     
-    val columns = DeviceUtils.getGridColumns(LocalContext.current.resources)
     LazyVerticalGrid(
-        columns = GridCells.Fixed(columns),
+        columns = GridCells.Adaptive(minSize = if (DeviceUtils.isTv(context)) 130.dp else 112.dp),
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(16.dp),
-        horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(12.dp),
-        verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(12.dp)
+        horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(14.dp),
+        verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(18.dp)
     ) {
-        itemsIndexed(moviesList) { index, movie ->
+        itemsIndexed(moviesList, key = { _, item -> item.id }) { index, movie ->
             MovieItem(
                 movie = movie,
+                focusModifier = rememberGridReturnFocus(movie.id.toString(), restoreFocusKey) { restoreFocusKey = null },
                 onClick = {
+                    restoreFocusKey = movie.id.toString()
+
                     // Save movie to storage
-                    StorageUtils.saveMovieToFile(context, movie)
+                    /* Saved by CatalogNavigation on IO. */
                     // Navigate to single movie screen
-                    navController?.navigate("single_movie/${movie.id}")
+                    navController?.let { com.pira.ccloud.core.catalog.CatalogNavigation.openMovie(context, it, movie) }
                 }
             )
             
@@ -381,108 +397,52 @@ fun ModernCircularProgressIndicator() {
 @Composable
 fun MovieItem(
     movie: Movie,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    focusModifier: Modifier = Modifier,
 ) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(310.dp) // Fixed height for all cards
-            .clickable { onClick() },
-        shape = RoundedCornerShape(12.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant,
-        )
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(12.dp)
+    PosterGridCard(
+        title = movie.title,
+        imageUrl = movie.image,
+        rating = movie.imdb,
+        subtitle = listOfNotNull(movie.year.takeIf { it > 0 }?.toString(), movie.genres.firstOrNull()?.title).joinToString(" · "),
+        onClick = onClick,
+        focusModifier = focusModifier,
+    )
+}
+
+/** Shared cinematic poster card (2:3 artwork, IMDb pill, focus ring) for Movies/Series/Search grids. */
+@Composable
+fun PosterGridCard(title: String, imageUrl: String, rating: Double, subtitle: String, onClick: () -> Unit, focusModifier: Modifier = Modifier) {
+    val interaction = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+    val focused by interaction.collectIsFocusedAsState()
+    Column(Modifier.fillMaxWidth()) {
+        Box(
+            Modifier.then(focusModifier).fillMaxWidth().aspectRatio(2f / 3f).clip(RoundedCornerShape(14.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant)
+                .then(if (focused) Modifier.border(4.dp, Color.White, RoundedCornerShape(14.dp)) else Modifier)
+                .clickable(interactionSource = interaction, indication = androidx.compose.material3.ripple(), onClick = onClick)
         ) {
-            // Movie poster with rating overlay
-            Box {
-                Image(
-                    painter = rememberAsyncImagePainter(
-                        ImageRequest.Builder(LocalContext.current)
-                            .data(movie.image)
-                            .crossfade(true)
-                            .build()
-                    ),
-                    contentDescription = movie.title,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(180.dp)
-                        .clip(RoundedCornerShape(8.dp)),
-                    contentScale = ContentScale.Crop
-                )
-                
-                // Rating overlay at top-right corner
-                Card(
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(8.dp),
-                    shape = RoundedCornerShape(50.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = Color.Black.copy(alpha = 0.7f)
-                    )
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Star,
-                            contentDescription = "Rating",
-                            tint = Color.Yellow,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(
-                            text = String.format("%.1f", movie.imdb),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = Color.White,
-                            fontWeight = FontWeight.Medium
-                        )
-                    }
-                }
-            }
-            
-            Spacer(modifier = Modifier.height(12.dp))
-            
-            // Movie details with weight to fill remaining space
-            Column(
-                modifier = Modifier.weight(1f)
-            ) {
+            coil.compose.AsyncImage(
+                model = ImageRequest.Builder(LocalContext.current).data(imageUrl).crossfade(!com.pira.ccloud.utils.DeviceUtils.isTv(LocalContext.current)).build(),
+                contentDescription = title, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize(),
+            )
+            if (rating > 0) {
                 Text(
-                    text = movie.title,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    color = MaterialTheme.colorScheme.onSurface
+                    text = "IMDb " + String.format(java.util.Locale.US, "%.1f", rating),
+                    color = Color.White, fontWeight = FontWeight.SemiBold,
+                    style = MaterialTheme.typography.labelSmall,
+                    modifier = Modifier.align(Alignment.TopStart).padding(8.dp).clip(RoundedCornerShape(50))
+                        .background(Color.Black.copy(alpha = 0.6f)).padding(horizontal = 8.dp, vertical = 3.dp),
                 )
-                
-                Spacer(modifier = Modifier.height(4.dp))
-                
-                Text(
-                    text = movie.year.toString(),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                
-                Spacer(modifier = Modifier.height(8.dp))
-                
-                // Genres
-                if (movie.genres.isNotEmpty()) {
-                    Text(
-                        text = movie.genres.joinToString(", ") { it.title },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.primary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
             }
+        }
+        Text(title, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, maxLines = 1,
+            overflow = TextOverflow.Ellipsis, color = if (focused) Color.Black else MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.padding(top = 8.dp).fillMaxWidth().clip(RoundedCornerShape(4.dp))
+                .background(if (focused) Color.White else Color.Transparent).padding(horizontal = 4.dp, vertical = 4.dp))
+        if (subtitle.isNotBlank()) {
+            Text(subtitle, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }

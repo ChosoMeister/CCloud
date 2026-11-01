@@ -3,6 +3,7 @@ package com.pira.ccloud.navigation
 import androidx.annotation.StringRes
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.Search
@@ -21,6 +22,13 @@ sealed class AppScreens(
     data object Splash : AppScreens(
         route = "splash",
         resourceId = R.string.app_name
+    )
+
+    /** Cinematic Home (catalog rails + local Continue Watching / My List). */
+    data object Home : AppScreens(
+        route = "home",
+        resourceId = R.string.cine_home,
+        icon = Icons.Default.Home
     )
 
     data object Movies : AppScreens(
@@ -87,6 +95,6 @@ sealed class AppScreens(
     )
 
     companion object {
-        val screens = listOf(Movies, Series, Search, Favorites, Settings)
+        val screens = listOf(Home, Movies, Series, Search, Favorites, Settings)
     }
 }
